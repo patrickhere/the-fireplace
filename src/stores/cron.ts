@@ -1,50 +1,81 @@
 // ---------------------------------------------------------------------------
-// Cron Store (Zustand)
+// Cron & Automation Store (Zustand)
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
-import type { Unsubscribe } from '@/gateway/types';
 
-// ---- Cron Types -----------------------------------------------------------
+// ---- Types ----------------------------------------------------------------
+
+export interface CronSchedule {
+  kind: 'at' | 'every' | 'cron';
+  at?: string;
+  every?: string;
+  cron?: string;
+  timezone?: string;
+}
+
+export interface CronPayload {
+  kind: 'systemEvent' | 'agentTurn';
+  event?: string;
+  message?: string;
+  data?: unknown;
+}
+
+export interface CronJobState {
+  nextRunAtMs?: number;
+  runningAtMs?: number;
+  lastRunAtMs?: number;
+  lastStatus?: string;
+  lastError?: string;
+  lastDurationMs?: number;
+  consecutiveErrors?: number;
+}
 
 export interface CronJob {
   id: string;
+  agentId?: string;
   name: string;
-  schedule: string; // Cron expression
-  command: string;
+  description?: string;
   enabled: boolean;
-  createdAt: number;
-  lastRun?: number;
-  nextRun?: number;
-  tags?: string[];
-  metadata?: Record<string, unknown>;
+  deleteAfterRun?: boolean;
+  createdAtMs: number;
+  updatedAtMs: number;
+  schedule: CronSchedule;
+  sessionTarget: 'main' | 'isolated';
+  wakeMode: 'next-heartbeat' | 'now';
+  payload: CronPayload;
+  delivery?: unknown;
+  state: CronJobState;
 }
 
-export interface CronExecution {
-  id: string;
+export interface CronRunLogEntry {
+  runId: string;
   jobId: string;
-  jobName: string;
-  startedAt: number;
-  completedAt?: number;
-  status: 'running' | 'success' | 'failed';
-  exitCode?: number;
-  output?: string;
+  startedAtMs: number;
+  finishedAtMs?: number;
+  status: string;
   error?: string;
+  durationMs?: number;
 }
 
-// ---- Event Payload Types --------------------------------------------------
-
-export interface CronJobEventPayload {
-  jobId: string;
-  type: 'created' | 'updated' | 'deleted' | 'executed';
-  timestamp: number;
+export interface CronListResponse {
+  jobs: CronJob[];
 }
 
-export interface CronExecutionEventPayload {
-  id: string;
-  jobId: string;
-  status: 'running' | 'success' | 'failed';
-  timestamp: number;
+export interface CronRunsResponse {
+  runs: CronRunLogEntry[];
+}
+
+export interface CronAddParams {
+  name: string;
+  agentId?: string;
+  description?: string;
+  enabled?: boolean;
+  deleteAfterRun?: boolean;
+  schedule: CronSchedule;
+  sessionTarget?: 'main' | 'isolated';
+  wakeMode?: 'next-heartbeat' | 'now';
+  payload: CronPayload;
 }
 
 // ---- Store Types ----------------------------------------------------------
@@ -52,32 +83,19 @@ export interface CronExecutionEventPayload {
 interface CronState {
   // Data
   jobs: CronJob[];
-  executions: CronExecution[];
-  selectedJob: CronJob | null;
+  runHistory: Record<string, CronRunLogEntry[]>;
 
   // UI State
   isLoading: boolean;
   error: string | null;
-  showCreateModal: boolean;
-  showHistoryModal: boolean;
-
-  // Event subscription
-  eventUnsubscribe: Unsubscribe | null;
 
   // Actions
   loadJobs: () => Promise<void>;
-  loadExecutions: (jobId?: string, limit?: number) => Promise<void>;
-  createJob: (name: string, schedule: string, command: string, enabled?: boolean) => Promise<void>;
-  updateJob: (id: string, updates: Partial<Omit<CronJob, 'id' | 'createdAt'>>) => Promise<void>;
-  deleteJob: (id: string) => Promise<void>;
-  enableJob: (id: string) => Promise<void>;
-  disableJob: (id: string) => Promise<void>;
-  runJob: (id: string) => Promise<void>;
-  setSelectedJob: (job: CronJob | null) => void;
-  setShowCreateModal: (show: boolean) => void;
-  setShowHistoryModal: (show: boolean) => void;
-  subscribeToEvents: () => void;
-  unsubscribeFromEvents: () => void;
+  addJob: (params: CronAddParams) => Promise<void>;
+  updateJob: (id: string, patch: Partial<CronAddParams> & { enabled?: boolean }) => Promise<void>;
+  removeJob: (id: string) => Promise<void>;
+  triggerJob: (id: string) => Promise<void>;
+  loadRuns: (id: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -86,13 +104,9 @@ interface CronState {
 export const useCronStore = create<CronState>((set, get) => ({
   // Initial state
   jobs: [],
-  executions: [],
-  selectedJob: null,
+  runHistory: {},
   isLoading: false,
   error: null,
-  showCreateModal: false,
-  showHistoryModal: false,
-  eventUnsubscribe: null,
 
   loadJobs: async () => {
     const { useConnectionStore } = await import('./connection');
@@ -101,12 +115,10 @@ export const useCronStore = create<CronState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      const response = await request<{ jobs: CronJob[] }>('cron.list', {
-        includeNext: true,
-      });
+      const response = await request<CronListResponse>('cron.list');
 
       set({
-        jobs: response.jobs || [],
+        jobs: response.jobs ?? [],
         isLoading: false,
       });
     } catch (err) {
@@ -116,65 +128,34 @@ export const useCronStore = create<CronState>((set, get) => ({
     }
   },
 
-  loadExecutions: async (jobId?: string, limit = 50) => {
+  addJob: async (params: CronAddParams) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      const response = await request<{ executions: CronExecution[] }>('cron.history', {
-        jobId,
-        limit,
-      });
+      await request('cron.add', params);
 
-      set({
-        executions: response.executions || [],
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load execution history';
-      set({ error: errorMessage });
-      console.error('[Cron] Failed to load executions:', err);
-    }
-  },
-
-  createJob: async (name: string, schedule: string, command: string, enabled = true) => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      await request('cron.add', {
-        name,
-        schedule,
-        command,
-        enabled,
-      });
-
-      // Reload jobs
+      // Reload jobs list
       get().loadJobs();
-      set({ showCreateModal: false });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to create cron job';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to add cron job';
       set({ error: errorMessage });
-      console.error('[Cron] Failed to create job:', err);
+      console.error('[Cron] Failed to add job:', err);
     }
   },
 
-  updateJob: async (id: string, updates: Partial<Omit<CronJob, 'id' | 'createdAt'>>) => {
+  updateJob: async (id: string, patch: Partial<CronAddParams> & { enabled?: boolean }) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      await request('cron.update', {
-        id,
-        ...updates,
-      });
+      await request('cron.update', { id, ...patch });
 
-      // Reload jobs
+      // Reload jobs list
       get().loadJobs();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update cron job';
@@ -183,128 +164,68 @@ export const useCronStore = create<CronState>((set, get) => ({
     }
   },
 
-  deleteJob: async (id: string) => {
+  removeJob: async (id: string) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      await request('cron.remove', {
-        id,
-      });
+      await request('cron.remove', { id });
 
-      // Remove from local state
+      // Remove from local state immediately
       set((state) => ({
-        jobs: state.jobs.filter((job) => job.id !== id),
+        jobs: state.jobs.filter((j) => j.id !== id),
       }));
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to delete cron job';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to remove cron job';
       set({ error: errorMessage });
-      console.error('[Cron] Failed to delete job:', err);
+      console.error('[Cron] Failed to remove job:', err);
     }
   },
 
-  enableJob: async (id: string) => {
-    await get().updateJob(id, { enabled: true });
-  },
-
-  disableJob: async (id: string) => {
-    await get().updateJob(id, { enabled: false });
-  },
-
-  runJob: async (id: string) => {
+  triggerJob: async (id: string) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      await request('cron.run', {
-        id,
-      });
+      await request('cron.run', { id });
+
+      // Reload jobs to get updated state
+      get().loadJobs();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to run cron job';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to trigger cron job';
       set({ error: errorMessage });
-      console.error('[Cron] Failed to run job:', err);
+      console.error('[Cron] Failed to trigger job:', err);
     }
   },
 
-  setSelectedJob: (job: CronJob | null) => {
-    set({ selectedJob: job });
-  },
+  loadRuns: async (id: string) => {
+    const { useConnectionStore } = await import('./connection');
+    const { request } = useConnectionStore.getState();
 
-  setShowCreateModal: (show: boolean) => {
-    set({ showCreateModal: show });
-  },
+    try {
+      const response = await request<CronRunsResponse>('cron.runs', { id });
 
-  setShowHistoryModal: (show: boolean) => {
-    set({ showHistoryModal: show });
-    if (show && get().executions.length === 0) {
-      get().loadExecutions();
-    }
-  },
-
-  subscribeToEvents: () => {
-    const { eventUnsubscribe } = get();
-
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-    }
-
-    (async () => {
-      const { useConnectionStore } = await import('./connection');
-      const { subscribe } = useConnectionStore.getState();
-
-      // Subscribe to cron job events
-      const unsub1 = subscribe<CronJobEventPayload>('cron', (payload) => {
-        console.log('[Cron] Job event:', payload);
-
-        // Reload jobs on any cron event
-        if (['created', 'updated', 'deleted', 'executed'].includes(payload.type)) {
-          get().loadJobs();
-        }
-      });
-
-      // Subscribe to execution events
-      const unsub2 = subscribe<CronExecutionEventPayload>('cron.execution', (payload) => {
-        console.log('[Cron] Execution event:', payload);
-
-        // Update execution in local state if history is visible
-        if (get().showHistoryModal) {
-          get().loadExecutions();
-        }
-      });
-
-      set({
-        eventUnsubscribe: () => {
-          unsub1();
-          unsub2();
+      set((state) => ({
+        runHistory: {
+          ...state.runHistory,
+          [id]: response.runs ?? [],
         },
-      });
-    })();
-  },
-
-  unsubscribeFromEvents: () => {
-    const { eventUnsubscribe } = get();
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-      set({ eventUnsubscribe: null });
+      }));
+    } catch (err) {
+      console.error('[Cron] Failed to load runs for job', id, ':', err);
     }
   },
 
   reset: () => {
-    const { unsubscribeFromEvents } = get();
-    unsubscribeFromEvents();
     set({
       jobs: [],
-      executions: [],
-      selectedJob: null,
+      runHistory: {},
       isLoading: false,
       error: null,
-      showCreateModal: false,
-      showHistoryModal: false,
-      eventUnsubscribe: null,
     });
   },
 }));

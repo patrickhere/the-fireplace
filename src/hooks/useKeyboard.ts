@@ -116,7 +116,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]): void {
   }, [handleKeyDown]);
 }
 
-/** Format a key string for display (e.g. "cmd+k" -> "Cmd K"). */
+/** Format a key string for display (e.g. "cmd+k" -> "⌘K"). */
 export function formatShortcut(keys: string): string {
   return keys
     .split('+')

@@ -1,238 +1,182 @@
 // ---------------------------------------------------------------------------
-// Logs Store (Zustand)
+// Logs & Debug Store (Zustand)
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
-import type { Unsubscribe } from '@/gateway/types';
 
-// ---- Log Types ------------------------------------------------------------
+// ---- Types ----------------------------------------------------------------
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-export interface LogEntry {
-  id: string;
-  timestamp: number;
-  level: LogLevel;
-  source: string;
-  message: string;
-  metadata?: Record<string, unknown>;
+export interface LogsTailResponse {
+  file: string;
+  cursor: number;
+  size: number;
+  lines: string[];
+  truncated?: boolean;
+  reset?: boolean;
 }
 
-export interface HealthStatus {
-  overall: 'healthy' | 'degraded' | 'unhealthy';
-  checks: Record<
-    string,
-    {
-      status: 'pass' | 'warn' | 'fail';
-      message?: string;
-      lastCheck?: number;
-    }
-  >;
-  lastUpdated: number;
-}
-
-// ---- Event Payload Types --------------------------------------------------
-
-export interface LogEventPayload {
-  timestamp: number;
-  level: LogLevel;
-  source: string;
-  message: string;
-  metadata?: Record<string, unknown>;
+export interface DebugResult {
+  ok: boolean;
+  payload?: unknown;
+  error?: string;
+  durationMs: number;
 }
 
 // ---- Store Types ----------------------------------------------------------
 
 interface LogsState {
   // Data
-  logs: LogEntry[];
-  health: HealthStatus | null;
+  lines: string[];
+  fileName: string | null;
+  cursor: number;
+  fileSize: number;
 
   // UI State
   isLoading: boolean;
   error: string | null;
+
+  // Tailing
   isTailing: boolean;
-  autoScroll: boolean;
-  maxLogs: number;
+  tailInterval: ReturnType<typeof setInterval> | null;
 
-  // Filters
-  levelFilter: LogLevel | 'all';
-  sourceFilter: string;
-  searchQuery: string;
-
-  // Event subscription
-  eventUnsubscribe: Unsubscribe | null;
+  // Debug
+  lastDebugResult: DebugResult | null;
+  isDebugLoading: boolean;
 
   // Actions
-  loadHistory: (limit?: number) => Promise<void>;
-  loadHealth: () => Promise<void>;
+  fetchLogs: (cursor?: number) => Promise<void>;
   startTailing: () => void;
   stopTailing: () => void;
   clearLogs: () => void;
-  setLevelFilter: (level: LogLevel | 'all') => void;
-  setSourceFilter: (source: string) => void;
-  setSearchQuery: (query: string) => void;
-  setAutoScroll: (enabled: boolean) => void;
-  subscribeToEvents: () => void;
-  unsubscribeFromEvents: () => void;
+  callMethod: (method: string, params?: unknown) => Promise<void>;
   reset: () => void;
-}
-
-// ---- Helpers --------------------------------------------------------------
-
-function generateLogId(): string {
-  return `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 // ---- Store ----------------------------------------------------------------
 
 export const useLogsStore = create<LogsState>((set, get) => ({
   // Initial state
-  logs: [],
-  health: null,
+  lines: [],
+  fileName: null,
+  cursor: 0,
+  fileSize: 0,
   isLoading: false,
   error: null,
   isTailing: false,
-  autoScroll: true,
-  maxLogs: 1000,
-  levelFilter: 'all',
-  sourceFilter: '',
-  searchQuery: '',
-  eventUnsubscribe: null,
+  tailInterval: null,
+  lastDebugResult: null,
+  isDebugLoading: false,
 
-  loadHistory: async (limit = 100) => {
+  fetchLogs: async (cursorOverride?: number) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
+    const { cursor: currentCursor } = get();
 
     try {
       set({ isLoading: true, error: null });
 
-      const response = await request<{ logs: LogEntry[] }>('logs.history', {
-        limit,
+      const response = await request<LogsTailResponse>('logs.tail', {
+        cursor: cursorOverride ?? currentCursor,
+        limit: 500,
       });
 
-      set({
-        logs: response.logs || [],
-        isLoading: false,
-      });
+      if (response.reset) {
+        // Log file was rotated, replace all lines
+        set({
+          lines: response.lines,
+          cursor: response.cursor,
+          fileName: response.file,
+          fileSize: response.size,
+          isLoading: false,
+        });
+      } else {
+        // Append new lines
+        set((state) => ({
+          lines: [...state.lines, ...response.lines],
+          cursor: response.cursor,
+          fileName: response.file,
+          fileSize: response.size,
+          isLoading: false,
+        }));
+      }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load log history';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch logs';
       set({ error: errorMessage, isLoading: false });
-      console.error('[Logs] Failed to load history:', err);
-    }
-  },
-
-  loadHealth: async () => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      const response = await request<HealthStatus>('health.status', {});
-
-      set({
-        health: response,
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load health status';
-      set({ error: errorMessage });
-      console.error('[Logs] Failed to load health:', err);
+      console.error('[Logs] Failed to fetch logs:', err);
     }
   },
 
   startTailing: () => {
-    if (get().isTailing) return;
+    const { tailInterval, fetchLogs } = get();
 
-    set({ isTailing: true });
-    get().subscribeToEvents();
+    // Clear existing interval
+    if (tailInterval) {
+      clearInterval(tailInterval);
+    }
+
+    // Fetch immediately, then poll every 2s
+    fetchLogs();
+
+    const interval = setInterval(() => {
+      fetchLogs();
+    }, 2000);
+
+    set({ isTailing: true, tailInterval: interval });
   },
 
   stopTailing: () => {
-    set({ isTailing: false });
-    get().unsubscribeFromEvents();
+    const { tailInterval } = get();
+    if (tailInterval) {
+      clearInterval(tailInterval);
+    }
+    set({ isTailing: false, tailInterval: null });
   },
 
   clearLogs: () => {
-    set({ logs: [] });
+    set({ lines: [], cursor: 0 });
   },
 
-  setLevelFilter: (level: LogLevel | 'all') => {
-    set({ levelFilter: level });
-  },
+  callMethod: async (method: string, params?: unknown) => {
+    const { useConnectionStore } = await import('./connection');
+    const { request } = useConnectionStore.getState();
 
-  setSourceFilter: (source: string) => {
-    set({ sourceFilter: source });
-  },
+    const startMs = Date.now();
 
-  setSearchQuery: (query: string) => {
-    set({ searchQuery: query });
-  },
+    try {
+      set({ isDebugLoading: true, lastDebugResult: null });
 
-  setAutoScroll: (enabled: boolean) => {
-    set({ autoScroll: enabled });
-  },
+      const payload = await request<unknown>(method, params ?? undefined);
+      const durationMs = Date.now() - startMs;
 
-  subscribeToEvents: () => {
-    const { eventUnsubscribe } = get();
-
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-    }
-
-    (async () => {
-      const { useConnectionStore } = await import('./connection');
-      const { subscribe } = useConnectionStore.getState();
-
-      const unsub = subscribe<LogEventPayload>('log', (payload) => {
-        const { maxLogs } = get();
-
-        const newLog: LogEntry = {
-          id: generateLogId(),
-          timestamp: payload.timestamp,
-          level: payload.level,
-          source: payload.source,
-          message: payload.message,
-          metadata: payload.metadata,
-        };
-
-        set((state) => {
-          const updatedLogs = [newLog, ...state.logs];
-          // Keep only the most recent maxLogs entries
-          if (updatedLogs.length > maxLogs) {
-            updatedLogs.splice(maxLogs);
-          }
-          return { logs: updatedLogs };
-        });
+      set({
+        lastDebugResult: { ok: true, payload, durationMs },
+        isDebugLoading: false,
       });
+    } catch (err) {
+      const durationMs = Date.now() - startMs;
+      const errorMessage = err instanceof Error ? err.message : 'Request failed';
 
-      set({ eventUnsubscribe: unsub });
-    })();
-  },
-
-  unsubscribeFromEvents: () => {
-    const { eventUnsubscribe } = get();
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-      set({ eventUnsubscribe: null });
+      set({
+        lastDebugResult: { ok: false, error: errorMessage, durationMs },
+        isDebugLoading: false,
+      });
     }
   },
 
   reset: () => {
-    const { unsubscribeFromEvents } = get();
-    unsubscribeFromEvents();
+    const { stopTailing } = get();
+    stopTailing();
     set({
-      logs: [],
-      health: null,
+      lines: [],
+      fileName: null,
+      cursor: 0,
+      fileSize: 0,
       isLoading: false,
       error: null,
       isTailing: false,
-      autoScroll: true,
-      maxLogs: 1000,
-      levelFilter: 'all',
-      sourceFilter: '',
-      searchQuery: '',
-      eventUnsubscribe: null,
+      tailInterval: null,
+      lastDebugResult: null,
+      isDebugLoading: false,
     });
   },
 }));

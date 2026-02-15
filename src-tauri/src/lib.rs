@@ -43,16 +43,16 @@ pub fn run() {
             notifications::send_notification,
         ])
         .setup(|app| {
-            #[cfg(debug_assertions)]
-            {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
-            }
-
             // System tray — macOS only
             #[cfg(target_os = "macos")]
             {
                 tray::setup_tray(app.handle())?;
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.open_devtools();
             }
 
             Ok(())

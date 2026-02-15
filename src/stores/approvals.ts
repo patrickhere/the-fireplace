@@ -1,92 +1,72 @@
 // ---------------------------------------------------------------------------
-// Approvals Store (Zustand)
+// Exec Approvals Store (Zustand)
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
 
-// ---- Approval Types -------------------------------------------------------
+// ---- Types ----------------------------------------------------------------
 
-export interface ApprovalRequest {
-  id: string;
-  type: 'exec' | 'dangerous' | 'device' | 'config';
-  command?: string;
-  reason?: string;
-  requestedBy?: string;
-  requestedAt: number;
-  context?: Record<string, unknown>;
-  expiresAt?: number;
+export interface ExecApprovalRequest {
+  id?: string;
+  command: string;
+  cwd?: string;
+  host?: string;
+  security?: string;
+  ask?: string;
+  agentId?: string;
+  resolvedPath?: string;
+  sessionKey?: string;
+  timeoutMs?: number;
+  twoPhase?: boolean;
+  receivedAt: number;
 }
 
-export interface ApprovalHistoryItem {
-  id: string;
-  type: 'exec' | 'dangerous' | 'device' | 'config';
-  command?: string;
-  reason?: string;
-  requestedAt: number;
-  resolvedAt: number;
-  resolution: 'approved' | 'rejected' | 'expired';
-  resolvedBy?: string;
-}
-
-export interface DenyListItem {
+export interface ExecApprovalPattern {
   pattern: string;
-  type: 'command' | 'path' | 'host';
-  addedAt: number;
-  reason?: string;
+  allow: boolean;
+  note?: string;
 }
 
-// ---- Event Payload Types --------------------------------------------------
-
-export interface ApprovalRequestedPayload {
-  id: string;
-  type: 'exec' | 'dangerous' | 'device' | 'config';
-  command?: string;
-  reason?: string;
-  requestedBy?: string;
-  timestamp: number;
-  context?: Record<string, unknown>;
+export interface ExecApprovalsAgentOverride {
+  agentId: string;
+  patterns: ExecApprovalPattern[];
 }
 
-export interface ApprovalResolvedPayload {
-  id: string;
-  resolution: 'approved' | 'rejected' | 'expired';
-  timestamp: number;
+export interface ExecApprovalsFile {
+  version: number;
+  defaults: ExecApprovalPattern[];
+  agents: Record<string, ExecApprovalPattern[]>;
+}
+
+export interface ExecApprovalsSnapshot {
+  path: string;
+  exists: boolean;
+  hash: string;
+  file: ExecApprovalsFile;
 }
 
 // ---- Store Types ----------------------------------------------------------
 
 interface ApprovalsState {
   // Data
-  pendingApprovals: ApprovalRequest[];
-  history: ApprovalHistoryItem[];
-  denyList: DenyListItem[];
+  snapshot: ExecApprovalsSnapshot | null;
+  pendingRequests: ExecApprovalRequest[];
 
   // UI State
   isLoading: boolean;
   error: string | null;
-  showHistoryModal: boolean;
-  showDenyListModal: boolean;
 
   // Event subscription
   eventUnsubscribe: Unsubscribe | null;
 
   // Actions
-  loadPendingApprovals: () => Promise<void>;
-  loadHistory: (limit?: number) => Promise<void>;
-  loadDenyList: () => Promise<void>;
-  approve: (id: string, reason?: string) => Promise<void>;
-  reject: (id: string, reason?: string) => Promise<void>;
-  addToDenyList: (
-    pattern: string,
-    type: 'command' | 'path' | 'host',
-    reason?: string
-  ) => Promise<void>;
-  removeFromDenyList: (pattern: string) => Promise<void>;
-  setShowHistoryModal: (show: boolean) => void;
-  setShowDenyListModal: (show: boolean) => void;
+  loadApprovals: () => Promise<void>;
+  saveApprovals: (file: ExecApprovalsFile, baseHash?: string) => Promise<void>;
+  resolveApproval: (id: string, decision: 'approve' | 'deny') => Promise<void>;
   subscribeToEvents: () => void;
   unsubscribeFromEvents: () => void;
+  removePendingRequest: (id: string) => void;
   reset: () => void;
 }
 
@@ -94,181 +74,69 @@ interface ApprovalsState {
 
 export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   // Initial state
-  pendingApprovals: [],
-  history: [],
-  denyList: [],
+  snapshot: null,
+  pendingRequests: [],
   isLoading: false,
   error: null,
-  showHistoryModal: false,
-  showDenyListModal: false,
   eventUnsubscribe: null,
 
-  loadPendingApprovals: async () => {
+  loadApprovals: async () => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ isLoading: true, error: null });
 
-      const response = await request<{ approvals: ApprovalRequest[] }>('exec.approvals.list', {
-        status: 'pending',
-        limit: 100,
-      });
+      const response = await request<ExecApprovalsSnapshot>('exec.approvals.get');
 
       set({
-        pendingApprovals: response.approvals || [],
+        snapshot: response,
         isLoading: false,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load pending approvals';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load approvals';
       set({ error: errorMessage, isLoading: false });
-      console.error('[Approvals] Failed to load pending approvals:', err);
+      console.error('[Approvals] Failed to load approvals:', err);
     }
   },
 
-  loadHistory: async (limit = 50) => {
+  saveApprovals: async (file: ExecApprovalsFile, baseHash?: string) => {
+    const { useConnectionStore } = await import('./connection');
+    const { request } = useConnectionStore.getState();
+    const { snapshot } = get();
+
+    try {
+      set({ error: null });
+
+      await request('exec.approvals.set', {
+        file,
+        baseHash: baseHash ?? snapshot?.hash,
+      });
+
+      // Reload after save
+      get().loadApprovals();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save approvals';
+      set({ error: errorMessage });
+      console.error('[Approvals] Failed to save approvals:', err);
+    }
+  },
+
+  resolveApproval: async (id: string, decision: 'approve' | 'deny') => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      const response = await request<{ history: ApprovalHistoryItem[] }>('exec.approvals.history', {
-        limit,
-      });
+      await request('exec.approval.resolve', { id, decision });
 
-      set({
-        history: response.history || [],
-      });
+      // Remove from pending
+      get().removePendingRequest(id);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load approval history';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to resolve approval';
       set({ error: errorMessage });
-      console.error('[Approvals] Failed to load history:', err);
-    }
-  },
-
-  loadDenyList: async () => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      const response = await request<{ denyList: DenyListItem[] }>('exec.approvals.denylist', {});
-
-      set({
-        denyList: response.denyList || [],
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load deny list';
-      set({ error: errorMessage });
-      console.error('[Approvals] Failed to load deny list:', err);
-    }
-  },
-
-  approve: async (id: string, reason?: string) => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      await request('exec.approval.resolve', {
-        id,
-        action: 'approve',
-        reason,
-      });
-
-      // Remove from pending approvals
-      set((state) => ({
-        pendingApprovals: state.pendingApprovals.filter((a) => a.id !== id),
-      }));
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to approve request';
-      set({ error: errorMessage });
-      console.error('[Approvals] Failed to approve:', err);
-    }
-  },
-
-  reject: async (id: string, reason?: string) => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      await request('exec.approval.resolve', {
-        id,
-        action: 'reject',
-        reason,
-      });
-
-      // Remove from pending approvals
-      set((state) => ({
-        pendingApprovals: state.pendingApprovals.filter((a) => a.id !== id),
-      }));
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to reject request';
-      set({ error: errorMessage });
-      console.error('[Approvals] Failed to reject:', err);
-    }
-  },
-
-  addToDenyList: async (pattern: string, type: 'command' | 'path' | 'host', reason?: string) => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      await request('exec.approvals.denylist.add', {
-        pattern,
-        type,
-        reason,
-      });
-
-      // Reload deny list
-      get().loadDenyList();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to add to deny list';
-      set({ error: errorMessage });
-      console.error('[Approvals] Failed to add to deny list:', err);
-    }
-  },
-
-  removeFromDenyList: async (pattern: string) => {
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
-
-    try {
-      set({ error: null });
-
-      await request('exec.approvals.denylist.remove', {
-        pattern,
-      });
-
-      // Remove from local state
-      set((state) => ({
-        denyList: state.denyList.filter((item) => item.pattern !== pattern),
-      }));
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to remove from deny list';
-      set({ error: errorMessage });
-      console.error('[Approvals] Failed to remove from deny list:', err);
-    }
-  },
-
-  setShowHistoryModal: (show: boolean) => {
-    set({ showHistoryModal: show });
-    if (show && get().history.length === 0) {
-      get().loadHistory();
-    }
-  },
-
-  setShowDenyListModal: (show: boolean) => {
-    set({ showDenyListModal: show });
-    if (show && get().denyList.length === 0) {
-      get().loadDenyList();
+      console.error('[Approvals] Failed to resolve approval:', err);
     }
   },
 
@@ -283,41 +151,20 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
       const { useConnectionStore } = await import('./connection');
       const { subscribe } = useConnectionStore.getState();
 
-      // Subscribe to approval request events
-      const unsub1 = subscribe<ApprovalRequestedPayload>('exec.approval.requested', (payload) => {
-        console.log('[Approvals] New approval request:', payload);
+      const unsub = subscribe<ExecApprovalRequest>('exec.approval.requested', (payload) => {
+        console.log('[Approvals] Approval requested:', payload);
 
-        const newApproval: ApprovalRequest = {
-          id: payload.id,
-          type: payload.type,
-          command: payload.command,
-          reason: payload.reason,
-          requestedBy: payload.requestedBy,
-          requestedAt: payload.timestamp,
-          context: payload.context,
+        const request: ExecApprovalRequest = {
+          ...payload,
+          receivedAt: Date.now(),
         };
 
         set((state) => ({
-          pendingApprovals: [newApproval, ...state.pendingApprovals],
+          pendingRequests: [...state.pendingRequests, request],
         }));
       });
 
-      // Subscribe to approval resolved events
-      const unsub2 = subscribe<ApprovalResolvedPayload>('exec.approval.resolved', (payload) => {
-        console.log('[Approvals] Approval resolved:', payload);
-
-        // Remove from pending
-        set((state) => ({
-          pendingApprovals: state.pendingApprovals.filter((a) => a.id !== payload.id),
-        }));
-      });
-
-      set({
-        eventUnsubscribe: () => {
-          unsub1();
-          unsub2();
-        },
-      });
+      set({ eventUnsubscribe: unsub });
     })();
   },
 
@@ -329,17 +176,20 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
     }
   },
 
+  removePendingRequest: (id: string) => {
+    set((state) => ({
+      pendingRequests: state.pendingRequests.filter((r) => r.id !== id),
+    }));
+  },
+
   reset: () => {
     const { unsubscribeFromEvents } = get();
     unsubscribeFromEvents();
     set({
-      pendingApprovals: [],
-      history: [],
-      denyList: [],
+      snapshot: null,
+      pendingRequests: [],
       isLoading: false,
       error: null,
-      showHistoryModal: false,
-      showDenyListModal: false,
       eventUnsubscribe: null,
     });
   },
