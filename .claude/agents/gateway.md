@@ -54,8 +54,13 @@ When connecting, use:
 - Non-local connections must sign the server challenge nonce
 - Local connections (loopback) auto-approve device pairing
 
-Reference the OpenClaw protocol source at:
-`/Users/admin/.nvm/versions/node/v24.13.1/lib/node_modules/openclaw/dist/plugin-sdk/gateway/protocol/`
+## Protocol Reference (In-Repo)
+
+All OpenClaw protocol types and docs are committed to the repo:
+- **Type definitions**: `docs/protocol/schema/` — all `.d.ts` files for every method/event
+- **Protocol spec**: `docs/gateway/protocol.md` — full protocol documentation
+- **Auth docs**: `docs/gateway/authentication.md`, `docs/gateway/pairing.md`, `docs/gateway/tailscale.md`
+- **Key files**: `frames.d.ts` (frame types), `logs-chat.d.ts` (chat methods), `sessions.d.ts`, `channels.d.ts`, `exec-approvals.d.ts`, `protocol-schemas.d.ts` (master registry)
 
 ## Available Skills & MCP Servers
 

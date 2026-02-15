@@ -217,29 +217,42 @@ launch_sessions() {
 
         echo "  ${GREEN}🔥${NC} Launching fireplace-$NAME..."
 
-        local PROMPT_FILE="$WT_PATH/.claude-prompt.txt"
-        echo "$PROMPT" > "$PROMPT_FILE"
+        # Write a launcher script to avoid quoting hell through AppleScript
+        local LAUNCHER="$WT_PATH/.claude-launch.sh"
+        cat > "$LAUNCHER" <<LAUNCHER_EOF
+#!/bin/zsh
+cd "$WT_PATH"
+exec claude "\$(cat .claude-prompt.txt)"
+LAUNCHER_EOF
+        chmod +x "$LAUNCHER"
+        echo "$PROMPT" > "$WT_PATH/.claude-prompt.txt"
 
-        osascript -e "
-            tell application \"Terminal\"
-                activate
-                do script \"cd '$WT_PATH' && claude -p \\\"\$(cat .claude-prompt.txt)\\\"\"
+        # Launch in iTerm2 (preferred) or Terminal.app
+        if osascript <<APPLE_EOF 2>/dev/null; then
+tell application "iTerm2"
+    activate
+    if (count of windows) = 0 then
+        create window with default profile
+        tell current session of current window
+            write text "'${LAUNCHER}'"
+        end tell
+    else
+        tell current window
+            create tab with default profile
+            tell current session
+                write text "'${LAUNCHER}'"
             end tell
-        " 2>/dev/null || {
-            osascript -e "
-                tell application \"iTerm2\"
-                    tell current window
-                        create tab with default profile
-                        tell current session
-                            write text \"cd '$WT_PATH' && claude -p \\\"\$(cat .claude-prompt.txt)\\\"\"
-                        end tell
-                    end tell
-                end tell
-            " 2>/dev/null || {
-                echo "  ${YELLOW}⚠${NC} Couldn't open terminal for $NAME"
-                echo "    Manual: cd $WT_PATH && claude -p \"\$(cat .claude-prompt.txt)\""
-            }
-        }
+        end tell
+    end if
+end tell
+APPLE_EOF
+            true
+        elif osascript -e "tell application \"Terminal\" to do script \"'${LAUNCHER}'\"" 2>/dev/null; then
+            true
+        else
+            echo "  ${YELLOW}⚠${NC} Couldn't open terminal for $NAME"
+            echo "    Run manually: $LAUNCHER"
+        fi
 
         sleep 1
     done
