@@ -5,7 +5,7 @@
 #   ./scripts/doctor.sh          # Check only
 #   ./scripts/doctor.sh --fix    # Auto-install missing dependencies
 
-set -e
+# Don't use set -e — we want to continue checking even if installs fail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -176,14 +176,17 @@ fi
 if ! $TAURI_FOUND; then
     if $FIX && command -v pnpm &>/dev/null; then
         fixing "Tauri CLI"
-        # Ensure pnpm global bin is set up first
+        # Ensure pnpm global bin is set up
         pnpm setup 2>/dev/null || true
-        source "$HOME/.zshrc" 2>/dev/null || source "$HOME/.bashrc" 2>/dev/null || true
-        pnpm add -g @tauri-apps/cli 2>/dev/null || {
+        # Export PNPM_HOME for this session since source ~/.zshrc won't help in a script
+        export PNPM_HOME="$HOME/Library/pnpm"
+        export PATH="$PNPM_HOME:$PATH"
+        if pnpm add -g @tauri-apps/cli 2>/dev/null; then
+            ((FIXED++))
+        else
             warn "pnpm global install failed — Tauri CLI will be installed as project dependency instead"
             ((WARNINGS++))
-        }
-        ((FIXED++))
+        fi
     else
         warn "Tauri CLI not found globally (will use project-local via pnpm)"
         info "Run: pnpm setup && pnpm add -g @tauri-apps/cli"
