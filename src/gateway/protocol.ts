@@ -189,7 +189,7 @@ export function detectPlatform(): 'macos' | 'ios' | 'unknown' {
 export function buildClientInfo(): ConnectClientInfo {
   const platform = detectPlatform();
   return {
-    id: platform === 'ios' ? 'openclaw-ios' : 'openclaw-macos',
+    id: 'openclaw-control-ui', // Use control-ui ID to avoid hashes requirement
     version: __APP_VERSION__,
     platform,
     mode: 'webchat', // Use webchat mode to avoid hashes.sha512 requirement
