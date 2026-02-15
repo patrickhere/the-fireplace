@@ -67,3 +67,11 @@ You are the UI shell and design system specialist for The Fireplace, a Tauri v2 
 - `src-tauri/src/lib.rs` for shared Rust commands
 - `src-tauri/tauri.conf.json` for window config, permissions, plugins
 - iOS target via `src-tauri/gen/apple/`
+
+## Available Skills & MCP Servers
+
+Use these project resources:
+- **`/design`** — the Fireplace design system with exact color palette, component patterns, responsive rules, and anti-patterns. Reference this for all styling decisions.
+- **`/dev`** — start `pnpm tauri dev` to test the shell.
+- **context7 MCP** — look up Tauri v2, React 19, Tailwind CSS v4, shadcn/ui, and React Router docs when needed.
+- **playwright MCP** — test the app in a browser view if needed.

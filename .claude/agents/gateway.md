@@ -56,3 +56,10 @@ When connecting, use:
 
 Reference the OpenClaw protocol source at:
 `/Users/admin/.nvm/versions/node/v24.13.1/lib/node_modules/openclaw/dist/plugin-sdk/gateway/protocol/`
+
+## Available Skills & MCP Servers
+
+Use these project resources:
+- **`/protocol-check`** — verify your types and method names against the OpenClaw source. Run this after implementing or updating any protocol types.
+- **`/dev`** — start `pnpm tauri dev` to test the connection live.
+- **context7 MCP** — look up Tauri v2, TypeScript, and Zustand docs when needed.

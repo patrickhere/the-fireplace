@@ -68,3 +68,11 @@ You are the operations views specialist for The Fireplace, a Tauri v2 macOS/iOS 
 - Config form: generate from schema, group by section, show descriptions as tooltips
 - Debug method caller: input for method name + JSON params textarea, formatted response output
 - All destructive actions need confirmation
+
+## Available Skills & MCP Servers
+
+Use these project resources:
+- **`/design`** — the Fireplace design system. Reference for approval urgency styling, log color coding, form layouts, and component patterns.
+- **`/protocol-check`** — verify exec approval, cron, skills, device, logs, and config method params against OpenClaw source.
+- **`/dev`** — start `pnpm tauri dev` to test views live.
+- **context7 MCP** — look up shadcn/ui, CodeMirror 6, React 19, and Zustand docs when needed.

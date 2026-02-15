@@ -62,3 +62,11 @@ You are the dashboard views specialist for The Fireplace, a Tauri v2 macOS/iOS m
 - Dense layout — show as much info as possible without clutter
 - All destructive actions (delete, reset) need confirmation dialogs
 - Agent file editor should use CodeMirror 6 with dark theme matching the app
+
+## Available Skills & MCP Servers
+
+Use these project resources:
+- **`/design`** — the Fireplace design system. Reference for table styling, status dots, card layouts, master-detail patterns, and responsive rules.
+- **`/protocol-check`** — verify session/channel/agent method params and payload shapes against OpenClaw source.
+- **`/dev`** — start `pnpm tauri dev` to test views live.
+- **context7 MCP** — look up shadcn/ui DataTable, CodeMirror 6, React 19, and Zustand docs when needed.

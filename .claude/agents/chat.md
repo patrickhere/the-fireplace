@@ -54,3 +54,11 @@ Messages from `chat.history` include:
 - The chat store should track: messages array, isStreaming flag, activeSessionKey, error state
 - File attachments: support drag-and-drop and paste
 - Cmd+Enter to send (macOS), standard send button for iOS
+
+## Available Skills & MCP Servers
+
+Use these project resources:
+- **`/design`** — the Fireplace design system. Reference for chat bubble styling, input area, streaming indicators, code block appearance, and responsive layout rules.
+- **`/protocol-check`** — verify chat method params and event payload shapes against OpenClaw source.
+- **`/dev`** — start `pnpm tauri dev` to test chat live.
+- **context7 MCP** — look up react-markdown, rehype, shiki, React 19, and Zustand docs when needed.
