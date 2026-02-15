@@ -148,6 +148,12 @@ else
     if $FIX && command -v npm &>/dev/null; then
         fixing "pnpm"
         npm install -g pnpm
+        # Run pnpm setup to create global bin directory
+        if command -v pnpm &>/dev/null; then
+            pnpm setup 2>/dev/null || true
+            # Source the updated shell config
+            source "$HOME/.zshrc" 2>/dev/null || source "$HOME/.bashrc" 2>/dev/null || true
+        fi
         ((FIXED++))
     else
         fail "pnpm not installed"
@@ -170,11 +176,17 @@ fi
 if ! $TAURI_FOUND; then
     if $FIX && command -v pnpm &>/dev/null; then
         fixing "Tauri CLI"
-        pnpm add -g @tauri-apps/cli
+        # Ensure pnpm global bin is set up first
+        pnpm setup 2>/dev/null || true
+        source "$HOME/.zshrc" 2>/dev/null || source "$HOME/.bashrc" 2>/dev/null || true
+        pnpm add -g @tauri-apps/cli 2>/dev/null || {
+            warn "pnpm global install failed — Tauri CLI will be installed as project dependency instead"
+            ((WARNINGS++))
+        }
         ((FIXED++))
     else
         warn "Tauri CLI not found globally (will use project-local via pnpm)"
-        info "Run: pnpm add -g @tauri-apps/cli"
+        info "Run: pnpm setup && pnpm add -g @tauri-apps/cli"
         ((WARNINGS++))
     fi
 fi
