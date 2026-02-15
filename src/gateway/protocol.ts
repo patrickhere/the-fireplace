@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import * as ed25519 from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
 import type {
   RequestFrame,
   ConnectParams,
@@ -10,6 +11,10 @@ import type {
   ConnectDevice,
   GatewayFrame,
 } from './types';
+
+// Configure ed25519 with SHA-512 before any operations
+// This is REQUIRED for @noble/ed25519 v3.x to support synchronous operations
+ed25519.hashes.sha512 = sha512;
 
 // ---- ID Generation --------------------------------------------------------
 
@@ -189,10 +194,12 @@ export function detectPlatform(): 'macos' | 'ios' | 'unknown' {
 export function buildClientInfo(): ConnectClientInfo {
   const platform = detectPlatform();
   return {
-    id: 'openclaw-control-ui', // Use control-ui ID to avoid hashes requirement
+    id: platform === 'ios' ? 'openclaw-ios' : 'openclaw-macos',
     version: __APP_VERSION__,
     platform,
-    mode: 'webchat', // Use webchat mode to avoid hashes.sha512 requirement
+    mode: 'ui',
+    displayName: 'The Fireplace',
+    deviceFamily: platform === 'macos' ? 'Mac' : 'iPhone',
   };
 }
 
