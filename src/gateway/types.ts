@@ -300,46 +300,16 @@ export interface ShutdownEventPayload {
 
 // ---- Side-Effecting Methods -----------------------------------------------
 
-/** Methods that mutate state and should carry an idempotency key. */
-export const SIDE_EFFECTING_METHODS: ReadonlySet<string> = new Set([
-  'chat.send',
-  'chat.inject',
-  'config.apply',
-  'config.set',
-  'config.patch',
-  'session.create',
-  'session.cancel',
-  'session.delete',
-  'sessions.patch',
-  'sessions.reset',
-  'sessions.delete',
-  'sessions.compact',
-  'exec.approve',
-  'exec.deny',
-  'exec.approval.resolve',
-  'cron.add',
-  'cron.update',
-  'cron.remove',
-  'cron.run',
-  'agents.create',
-  'agents.update',
-  'agents.delete',
-  'agents.files.set',
-  'device.pair.approve',
-  'device.pair.reject',
-  'device.token.rotate',
-  'device.token.revoke',
-  'skills.install',
-  'skills.update',
-  'model.set',
-  'node.invoke',
-  'node.pair.approve',
-  'node.pair.reject',
-  'node.rename',
-  'update.run',
-  'wizard.start',
-  'wizard.next',
-  'wizard.cancel',
-  'channels.logout',
-  'talk.mode',
-]);
+/**
+ * Methods that accept an idempotencyKey parameter.
+ *
+ * NOTE: OpenClaw only uses idempotencyKey for chat.send and node.invoke.
+ * Other methods use different consistency mechanisms:
+ * - Config operations use baseHash for optimistic concurrency control
+ * - Pairing operations use requestId for identifying specific requests
+ * - Most other operations don't need client-side idempotency keys
+ *
+ * The gateway enforces strict schema validation with additionalProperties: false,
+ * so adding idempotencyKey to methods that don't accept it will cause errors.
+ */
+export const SIDE_EFFECTING_METHODS: ReadonlySet<string> = new Set(['chat.send', 'node.invoke']);
