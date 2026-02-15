@@ -1,0 +1,50 @@
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- macOS menu bar template icon - single color with alpha -->
+  <!-- Must be black (#000000) with varying opacity for proper template rendering -->
+
+  <!-- Outer flame shape -->
+  <path d="M 16 3
+           C 16 3, 20 7, 20 11
+           C 20 13, 19 15, 19 17
+           C 19 19, 20 21, 20 23
+           C 20 25, 18 27, 16 27
+           C 14 27, 12 25, 12 23
+           C 12 21, 13 19, 13 17
+           C 13 15, 12 13, 12 11
+           C 12 7, 16 3, 16 3 Z"
+        fill="#000000"
+        opacity="0.85"/>
+
+  <!-- Left side flame -->
+  <path d="M 13 9
+           C 13 9, 10 11, 10 14
+           C 10 16.5, 11.5 18, 13 19.5
+           L 12.5 20.5
+           C 11 19, 9 17, 9 14
+           C 9 10.5, 13 9, 13 9 Z"
+        fill="#000000"
+        opacity="0.7"/>
+
+  <!-- Right side flame -->
+  <path d="M 19 9
+           C 19 9, 22 11, 22 14
+           C 22 16.5, 20.5 18, 19 19.5
+           L 19.5 20.5
+           C 21 19, 23 17, 23 14
+           C 23 10.5, 19 9, 19 9 Z"
+        fill="#000000"
+        opacity="0.7"/>
+
+  <!-- Inner highlight -->
+  <path d="M 16 6
+           C 16 6, 18 9, 18 12
+           C 18 14, 17.5 16, 17.5 18
+           C 17.5 20, 18 21.5, 18 22.5
+           C 18 23.5, 17 24.5, 16 24.5
+           C 15 24.5, 14 23.5, 14 22.5
+           C 14 21.5, 14.5 20, 14.5 18
+           C 14.5 16, 14 14, 14 12
+           C 14 9, 16 6, 16 6 Z"
+        fill="#000000"
+        opacity="0.5"/>
+</svg>

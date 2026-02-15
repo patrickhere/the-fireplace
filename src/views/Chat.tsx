@@ -12,7 +12,7 @@ import type { Attachment, SessionConfig, Message } from '@/stores/chat';
 
 function SessionSelector() {
   const { activeSessionKey, setActiveSession } = useChatStore();
-  const [sessions, setSessions] = useState<Array<{ key: string; name: string }>>([]);
+  const [sessions, setSessions] = useState<Array<{ key: string; label?: string }>>([]);
   const { request, status } = useConnectionStore();
 
   useEffect(() => {
@@ -21,9 +21,12 @@ function SessionSelector() {
     // Load available sessions
     const loadSessions = async () => {
       try {
-        const response = await request<{ sessions: Array<{ key: string; name: string }> }>(
-          'sessions.list'
-        );
+        const response = await request<{
+          sessions: Array<{ key: string; label?: string; lastActive?: number }>;
+        }>('sessions.list', {
+          limit: 100,
+          includeDerivedTitles: false,
+        });
         const sessionList = response.sessions || [];
         setSessions(sessionList);
 
@@ -42,6 +45,10 @@ function SessionSelector() {
     loadSessions();
   }, [status, request, activeSessionKey, setActiveSession]);
 
+  if (sessions.length === 0) {
+    return <div className="text-sm text-zinc-500">No sessions available</div>;
+  }
+
   return (
     <select
       value={activeSessionKey || ''}
@@ -50,7 +57,7 @@ function SessionSelector() {
     >
       {sessions.map((session) => (
         <option key={session.key} value={session.key}>
-          {session.name || session.key}
+          {session.label || session.key}
         </option>
       ))}
     </select>
@@ -90,6 +97,7 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
             onChange={(e) => updateSessionConfig({ model: e.target.value })}
             className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
           >
+            <option value="claude-opus-4-6">Claude Opus 4.6</option>
             <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
             <option value="claude-opus-4">Claude Opus 4</option>
             <option value="claude-haiku-4">Claude Haiku 4</option>
@@ -160,7 +168,7 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
 
 // ---- Message Bubble -------------------------------------------------------
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isInjected = message.metadata?.injected === true;
@@ -228,8 +236,13 @@ function MessageBubble({ message }: { message: Message }) {
 
         {/* Text content */}
         {textContent && (
-          <div className={isUser || isSystem ? 'text-sm' : ''}>
+          <div
+            className={`${isUser || isSystem ? 'text-sm' : ''} ${isStreaming ? 'relative' : ''}`}
+          >
             <MarkdownRenderer content={textContent} />
+            {isStreaming && (
+              <span className="ml-1 inline-block h-4 w-2 animate-pulse bg-amber-500" />
+            )}
           </div>
         )}
 
@@ -250,11 +263,21 @@ function MessageBubble({ message }: { message: Message }) {
 
 function StreamingIndicator() {
   return (
-    <div className="mb-3 flex justify-start">
-      <div className="rounded-lg bg-zinc-900 px-3 py-2">
+    <div className="animate-fade-in mb-3 flex justify-start">
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2">
         <div className="flex items-center gap-2">
-          <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-          <span className="text-sm text-zinc-400">Thinking...</span>
+          <div className="flex gap-1">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+            <div
+              className="h-2 w-2 animate-pulse rounded-full bg-amber-500"
+              style={{ animationDelay: '0.2s' }}
+            />
+            <div
+              className="h-2 w-2 animate-pulse rounded-full bg-amber-500"
+              style={{ animationDelay: '0.4s' }}
+            />
+          </div>
+          <span className="text-sm text-zinc-400">Streaming...</span>
         </div>
       </div>
     </div>
@@ -494,8 +517,15 @@ function MessageInput() {
 // ---- Main Chat View -------------------------------------------------------
 
 export function Chat() {
-  const { messages, isStreaming, activeSessionKey, loadHistory, subscribeToEvents, error } =
-    useChatStore();
+  const {
+    messages,
+    isStreaming,
+    streamingMessageId,
+    activeSessionKey,
+    loadHistory,
+    subscribeToEvents,
+    error,
+  } = useChatStore();
   const { status } = useConnectionStore();
   const [showConfig, setShowConfig] = useState(false);
   const [showInjectModal, setShowInjectModal] = useState(false);
@@ -604,12 +634,14 @@ export function Chat() {
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isStreaming={isStreaming && msg.id === streamingMessageId}
+          />
         ))}
 
-        {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
-          <StreamingIndicator />
-        )}
+        {isStreaming && !streamingMessageId && <StreamingIndicator />}
 
         <div ref={messagesEndRef} />
       </div>

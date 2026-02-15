@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod keychain;
 mod notifications;
 #[cfg(target_os = "macos")]
 mod tray;
@@ -41,6 +42,10 @@ pub fn run() {
             greet,
             get_platform,
             notifications::send_notification,
+            keychain::keychain_store_token,
+            keychain::keychain_retrieve_token,
+            keychain::keychain_delete_token,
+            keychain::keychain_has_token,
         ])
         .setup(|app| {
             // System tray — macOS only

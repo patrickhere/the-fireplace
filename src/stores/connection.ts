@@ -16,7 +16,8 @@ import type {
   Unsubscribe,
   RequestOptions,
 } from '@/gateway/types';
-import { buildClientInfo } from '@/gateway/protocol';
+import { buildClientInfo, getOrCreateDeviceId } from '@/gateway/protocol';
+import { deleteDeviceToken } from '@/lib/keychain';
 
 // ---- Store Types ----------------------------------------------------------
 
@@ -49,6 +50,7 @@ interface ConnectionState {
   connect: () => Promise<void>;
   disconnect: () => void;
   destroy: () => void;
+  clearDeviceToken: () => Promise<void>;
 
   // -- Request forwarding
   request: <T = unknown>(method: string, params?: unknown, options?: RequestOptions) => Promise<T>;
@@ -214,5 +216,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       return NOOP_UNSUBSCRIBE;
     }
     return client.onAny(handler);
+  },
+
+  clearDeviceToken: async () => {
+    const { gatewayUrl } = get();
+    const deviceId = getOrCreateDeviceId();
+
+    try {
+      await deleteDeviceToken(deviceId, gatewayUrl);
+      console.log('[ConnectionStore] Cleared device token from keychain');
+    } catch (err) {
+      console.warn('[ConnectionStore] Failed to clear device token from keychain:', err);
+      throw err;
+    }
   },
 }));

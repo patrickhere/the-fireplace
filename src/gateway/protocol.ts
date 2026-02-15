@@ -34,7 +34,14 @@ export function buildRequestFrame(method: string, params?: unknown, id?: string)
   };
 }
 
-/** Build the `connect` request params for the v3 handshake. */
+/**
+ * Build the `connect` request params for the v3 handshake.
+ *
+ * @param clientInfo - Client identity information
+ * @param device - Device identity with cryptographic proof
+ * @param scopes - Requested scopes (default: full operator permissions)
+ * @param authToken - Optional device token from keychain for re-authentication
+ */
 export function buildConnectParams(
   clientInfo: ConnectClientInfo,
   device: ConnectDevice,

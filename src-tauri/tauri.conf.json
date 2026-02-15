@@ -13,11 +13,14 @@
     "active": true,
     "targets": "all",
     "icon": [
+      "icons/16x16.png",
       "icons/32x32.png",
+      "icons/32x32@2x.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.png"
     ],
     "resources": [],
     "copyright": "",
@@ -33,7 +36,7 @@
   },
   "app": {
     "trayIcon": {
-      "iconPath": "icons/32x32.png",
+      "iconPath": "icons/tray-icon.png",
       "iconAsTemplate": true
     },
     "windows": [

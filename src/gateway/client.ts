@@ -30,7 +30,9 @@ import {
   buildDeviceIdentity,
   generateIdempotencyKey,
   isValidFrame,
+  getOrCreateDeviceId,
 } from './protocol';
+import { retrieveDeviceToken, storeDeviceToken } from '@/lib/keychain';
 
 // ---- Constants ------------------------------------------------------------
 
@@ -625,8 +627,12 @@ export class GatewayClient {
    *
    * Step 2 of the v3 handshake: build and send the `connect` request
    * with client identity, role, scopes, auth, and device info.
+   *
+   * Before sending the connect request, attempts to load a stored device
+   * token from the keychain. If found, includes it in the auth field for
+   * automatic re-authentication without needing device pairing approval.
    */
-  private handleChallenge(challenge: ConnectChallengePayload): void {
+  private async handleChallengeAsync(challenge: ConnectChallengePayload): Promise<void> {
     console.log(
       `[Gateway] Received connect.challenge: nonce=${challenge.nonce} ts=${challenge.ts}`
     );
@@ -634,12 +640,24 @@ export class GatewayClient {
 
     // Build device identity using the challenge nonce
     const device = buildDeviceIdentity(challenge.nonce);
+    const deviceId = getOrCreateDeviceId();
+
+    // Try to retrieve stored device token from keychain
+    let authToken: string | undefined;
+    try {
+      const storedToken = await retrieveDeviceToken(deviceId, this.config.url);
+      authToken = storedToken.token;
+      console.log('[Gateway] Using stored device token from keychain');
+    } catch (err) {
+      // Token not found or keychain access failed -- proceed without token
+      console.log('[Gateway] No stored device token found, proceeding with device pairing');
+    }
 
     const connectParams = buildConnectParams(
       this.config.clientInfo,
       device,
       ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals'],
-      this._auth?.deviceToken
+      authToken
     );
 
     const connectFrame = buildRequestFrame('connect', connectParams);
@@ -670,10 +688,23 @@ export class GatewayClient {
   }
 
   /**
+   * Synchronous wrapper for handleChallengeAsync to maintain compatibility
+   * with existing event handling code. Catches and logs errors from the
+   * async flow but does not propagate them (they'll be caught by the
+   * handshake timeout or connection error handling).
+   */
+  private handleChallenge(challenge: ConnectChallengePayload): void {
+    this.handleChallengeAsync(challenge).catch((err) => {
+      console.error('[Gateway] Error in challenge handling:', err);
+      this.abortConnection(err instanceof Error ? err : new Error(String(err)));
+    });
+  }
+
+  /**
    * Handle the hello-ok response from the server.
    *
-   * Step 4 of the v3 handshake: store server info, start tick watchdog,
-   * and mark the connection as established.
+   * Step 4 of the v3 handshake: store server info, persist device token
+   * to keychain, start tick watchdog, and mark the connection as established.
    */
   private handleHelloOk(payload: HelloOkPayload): void {
     if (payload.type !== 'hello-ok') {
@@ -702,6 +733,22 @@ export class GatewayClient {
     // Initialize state version from snapshot
     if (payload.snapshot?.stateVersion) {
       this._stateVersion = { ...payload.snapshot.stateVersion };
+    }
+
+    // Persist device token to keychain if provided
+    if (payload.auth?.deviceToken) {
+      const deviceId = getOrCreateDeviceId();
+      storeDeviceToken(
+        deviceId,
+        this.config.url,
+        payload.auth.deviceToken,
+        payload.auth.role,
+        payload.auth.scopes,
+        payload.auth.issuedAtMs ?? Date.now()
+      ).catch((err) => {
+        // Log keychain storage errors but do not fail the connection
+        console.warn('[Gateway] Failed to store device token in keychain:', err);
+      });
     }
 
     // Reset reconnect state on successful connection

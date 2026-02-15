@@ -1,0 +1,81 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Fireplace flame icon - warm amber/orange gradient -->
+  <defs>
+    <!-- Main flame gradient (outer) -->
+    <linearGradient id="flameOuter" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#f59e0b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#dc2626;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Inner flame gradient (hotspot) -->
+    <linearGradient id="flameInner" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#fef3c7;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Core hotspot -->
+    <radialGradient id="flameCore" cx="50%" cy="40%">
+      <stop offset="0%" style="stop-color:#fffbeb;stop-opacity:1" />
+      <stop offset="70%" style="stop-color:#fef3c7;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#fbbf24;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Outer flame shape -->
+  <path d="M 512 128
+           C 512 128, 640 256, 640 384
+           C 640 448, 608 512, 608 576
+           C 608 640, 640 704, 640 768
+           C 640 832, 576 896, 512 896
+           C 448 896, 384 832, 384 768
+           C 384 704, 416 640, 416 576
+           C 416 512, 384 448, 384 384
+           C 384 256, 512 128, 512 128 Z"
+        fill="url(#flameOuter)"
+        opacity="0.95"/>
+
+  <!-- Left flame curve -->
+  <path d="M 432 320
+           C 432 320, 352 384, 352 480
+           C 352 560, 400 608, 432 640
+           C 448 656, 464 672, 480 688
+           L 464 704
+           C 448 688, 416 656, 400 624
+           C 368 576, 320 512, 320 448
+           C 320 352, 432 320, 432 320 Z"
+        fill="url(#flameOuter)"
+        opacity="0.85"/>
+
+  <!-- Right flame curve -->
+  <path d="M 592 320
+           C 592 320, 672 384, 672 480
+           C 672 560, 624 608, 592 640
+           C 576 656, 560 672, 544 688
+           L 560 704
+           C 576 688, 608 656, 624 624
+           C 656 576, 704 512, 704 448
+           C 704 352, 592 320, 592 320 Z"
+        fill="url(#flameOuter)"
+        opacity="0.85"/>
+
+  <!-- Inner flame -->
+  <path d="M 512 224
+           C 512 224, 576 288, 576 384
+           C 576 432, 560 480, 560 528
+           C 560 576, 576 624, 576 672
+           C 576 720, 544 768, 512 768
+           C 480 768, 448 720, 448 672
+           C 448 624, 464 576, 464 528
+           C 464 480, 448 432, 448 384
+           C 448 288, 512 224, 512 224 Z"
+        fill="url(#flameInner)"
+        opacity="0.9"/>
+
+  <!-- Core hotspot (brightest part) -->
+  <ellipse cx="512" cy="480" rx="120" ry="200" fill="url(#flameCore)" opacity="0.7"/>
+
+  <!-- Small inner highlight -->
+  <ellipse cx="512" cy="400" rx="60" ry="100" fill="#fffbeb" opacity="0.3"/>
+</svg>

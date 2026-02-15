@@ -28,6 +28,7 @@ A native macOS + iOS app (Tauri v2 + React 19) that replaces OpenClaw's Control 
 - shadcn/ui components go in `src/components/ui/`
 - Gateway protocol code goes in `src/gateway/`
 - Hooks go in `src/hooks/`
+- Icons/assets go in `src-tauri/icons/` and `public/`
 
 ### Component Patterns
 - Functional components only — no class components
@@ -47,6 +48,13 @@ A native macOS + iOS app (Tauri v2 + React 19) that replaces OpenClaw's Control 
 - zinc for grays, amber for accent — never blue, never slate, never gray-*
 - Dense layouts — `p-2`/`p-3` padding, not `p-6`
 - Status dots: emerald=connected, amber=warning, red=error, zinc=offline
+
+### Branding & Icons
+- Flame icon with amber/orange gradient (aligns with "Fireplace" name)
+- Master SVG sources in `src-tauri/icons/` — never edit PNGs directly
+- Regenerate all sizes with `./scripts/regenerate-icons.sh`
+- Menu bar icons are template images (black with alpha) for proper macOS rendering
+- See `docs/ICONS.md` for full icon documentation
 
 ### Testing
 - Test gateway connection changes with `/dev` before committing
