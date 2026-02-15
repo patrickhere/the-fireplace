@@ -62,8 +62,29 @@ A native macOS + iOS app (Tauri v2 + React 19) that replaces OpenClaw's Control 
 
 ## Learnings
 
-<!-- Add mistakes and fixes here as they happen. Format: -->
-<!-- - **Problem**: what went wrong → **Fix**: what to do instead -->
+### Ed25519 Configuration (Feb 2026)
+
+- **Problem**: `code=4000 reason=hashes.sha512 not set` when connecting to gateway
+- **Root Cause**: @noble/ed25519 v3.x requires explicit SHA-512 configuration for sync operations
+- **Fix**: Install `@noble/hashes` and configure at module init:
+  ```typescript
+  import * as ed25519 from '@noble/ed25519';
+  import { sha512 } from '@noble/hashes/sha512';
+  ed25519.hashes.sha512 = sha512; // Must happen before any ed25519 operations
+  ```
+
+### Device Signature Payload (Feb 2026)
+
+- **Problem**: `code=1008 reason=device signature invalid` after fixing Ed25519
+- **Root Cause**: Was only signing the nonce, but gateway expects signature over full auth payload
+- **Fix**: Sign the complete pipe-delimited payload:
+  ```
+  v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce
+  ```
+  - Version is "v2" when nonce is present, "v1" otherwise
+  - Scopes must be comma-separated (no spaces)
+  - Token can be empty string for initial pairing
+  - All fields pipe-delimited, signed as UTF-8 bytes
 
 ## Gateway Gotchas
 
@@ -73,3 +94,17 @@ A native macOS + iOS app (Tauri v2 + React 19) that replaces OpenClaw's Control 
 - Protocol version is 3 — always set `minProtocol: 3, maxProtocol: 3`
 - Server sends `connect.challenge` first, then client responds with `connect`
 - Tailscale identity headers handle auth — no token needed when connecting via Tailscale Serve
+
+### Device Authentication Flow
+
+1. Gateway sends `connect.challenge` with nonce
+2. Client gets deviceId from Ed25519 keypair (SHA-256 hash of public key)
+3. Client loads stored device token from keychain (if exists)
+4. Client builds auth payload: `v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce`
+5. Client signs payload with Ed25519 private key → base64-url signature
+6. Client sends `connect` request with device identity (id, publicKey, signature, signedAt, nonce)
+7. Gateway verifies signature and either:
+   - Returns device token if pairing approved
+   - Returns `code=1008 reason=pairing required` if not paired yet
+8. Admin approves pairing: `openclaw devices list` → `openclaw devices approve <requestId>`
+9. Client reconnects, gets device token, stores in keychain for future use
