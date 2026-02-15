@@ -71,7 +71,7 @@ function LogLine({ line, index }: { line: string; index: number }) {
   const colorClass = levelTextClass(level);
 
   return (
-    <div className={`whitespace-pre-wrap break-all leading-5 ${colorClass}`}>
+    <div className={`leading-5 break-all whitespace-pre-wrap ${colorClass}`}>
       <span className="mr-3 inline-block w-10 text-right text-zinc-600 select-none">
         {index + 1}
       </span>
@@ -227,12 +227,11 @@ function LogsTab() {
           <div className="p-4 text-sm text-zinc-500">Loading logs...</div>
         ) : lines.length === 0 ? (
           <div className="p-4 text-sm text-zinc-600">
-            No log lines yet. {isTailing ? 'Waiting for output...' : 'Click "Start Tailing" to begin.'}
+            No log lines yet.{' '}
+            {isTailing ? 'Waiting for output...' : 'Click "Start Tailing" to begin.'}
           </div>
         ) : (
-          lines.map((line, index) => (
-            <LogLine key={index} line={line} index={index} />
-          ))
+          lines.map((line, index) => <LogLine key={index} line={line} index={index} />)
         )}
       </div>
     </div>
@@ -357,7 +356,7 @@ function DebugTab() {
           </div>
         ) : (
           <pre
-            className={`whitespace-pre-wrap break-all font-mono text-xs ${
+            className={`font-mono text-xs break-all whitespace-pre-wrap ${
               lastDebugResult.ok ? 'text-zinc-300' : 'text-red-400'
             }`}
           >

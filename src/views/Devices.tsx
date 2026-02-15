@@ -217,9 +217,7 @@ function PairedDeviceRow({ device }: { device: PairedDevice }) {
                   variant="danger"
                 />
               )}
-              {isProcessing && (
-                <span className="ml-2 text-zinc-400">Processing...</span>
-              )}
+              {isProcessing && <span className="ml-2 text-zinc-400">Processing...</span>}
             </div>
           )}
         </div>

@@ -159,24 +159,18 @@ function SkillCard({ skill }: { skill: SkillStatus }) {
             <span className="text-sm font-medium text-zinc-100">{skill.name}</span>
             <span
               className={`rounded-full px-2 py-0.5 text-xs ${
-                skill.enabled
-                  ? 'bg-emerald-500/10 text-emerald-400'
-                  : 'bg-zinc-700 text-zinc-400'
+                skill.enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-700 text-zinc-400'
               }`}
             >
               {skill.enabled ? 'Enabled' : 'Disabled'}
             </span>
           </div>
           <div className="text-xs text-zinc-500">Key: {skill.key}</div>
-          {skill.version && (
-            <div className="text-xs text-zinc-500">Version: {skill.version}</div>
-          )}
+          {skill.version && <div className="text-xs text-zinc-500">Version: {skill.version}</div>}
           {skill.description && (
             <div className="mt-1 text-xs text-zinc-400">{skill.description}</div>
           )}
-          {skill.error && (
-            <div className="mt-1 text-xs text-red-400">{skill.error}</div>
-          )}
+          {skill.error && <div className="mt-1 text-xs text-red-400">{skill.error}</div>}
         </div>
 
         <div className="flex items-center gap-2">
@@ -268,9 +262,7 @@ function InstallPanel() {
         </div>
 
         {bins.length > 0 && (
-          <div className="text-xs text-zinc-500">
-            Available bins: {bins.join(', ')}
-          </div>
+          <div className="text-xs text-zinc-500">Available bins: {bins.join(', ')}</div>
         )}
       </div>
     </div>
@@ -280,13 +272,7 @@ function InstallPanel() {
 // ---- Main Skills View -----------------------------------------------------
 
 export function Skills() {
-  const {
-    skills,
-    isLoading,
-    error,
-    loadSkills,
-    loadBins,
-  } = useSkillsStore();
+  const { skills, isLoading, error, loadSkills, loadBins } = useSkillsStore();
 
   const { status } = useConnectionStore();
 

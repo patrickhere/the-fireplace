@@ -83,16 +83,12 @@ function SchemaSidebar({ uiHints }: { uiHints: Record<string, UiHint> }) {
   }, [uiHints]);
 
   if (groups.length === 0) {
-    return (
-      <div className="p-3 text-xs text-zinc-500">
-        No schema groups available.
-      </div>
-    );
+    return <div className="p-3 text-xs text-zinc-500">No schema groups available.</div>;
   }
 
   return (
     <div className="space-y-1 p-2">
-      <h3 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+      <h3 className="mb-2 px-1 text-xs font-semibold tracking-wider text-zinc-500 uppercase">
         Config Sections
       </h3>
       {groups.map((group) => (
@@ -101,7 +97,9 @@ function SchemaSidebar({ uiHints }: { uiHints: Record<string, UiHint> }) {
           className="rounded-md px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
         >
           <div className="font-medium">{group.name}</div>
-          <div className="text-xs text-zinc-500">{group.keys.length} setting{group.keys.length !== 1 ? 's' : ''}</div>
+          <div className="text-xs text-zinc-500">
+            {group.keys.length} setting{group.keys.length !== 1 ? 's' : ''}
+          </div>
         </div>
       ))}
     </div>
@@ -315,11 +313,7 @@ export function Config() {
               <span className="text-sm text-zinc-400">Loading configuration...</span>
             </div>
           ) : (
-            <ConfigEditor
-              value={editorValue}
-              onChange={handleEditorChange}
-              disabled={isSaving}
-            />
+            <ConfigEditor value={editorValue} onChange={handleEditorChange} disabled={isSaving} />
           )}
 
           {/* Status bar */}

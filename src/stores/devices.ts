@@ -181,9 +181,7 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
       const unsub2 = subscribe<DevicePairResolvedEvent>('device.pair.resolved', (payload) => {
         console.log('[Devices] Pair resolved:', payload);
         set((state) => ({
-          pairingRequests: state.pairingRequests.filter(
-            (r) => r.requestId !== payload.requestId
-          ),
+          pairingRequests: state.pairingRequests.filter((r) => r.requestId !== payload.requestId),
         }));
       });
 

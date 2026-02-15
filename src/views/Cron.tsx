@@ -5,7 +5,13 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useCronStore } from '@/stores/cron';
 import { useConnectionStore } from '@/stores/connection';
-import type { CronJob, CronAddParams, CronSchedule, CronPayload, CronRunLogEntry } from '@/stores/cron';
+import type {
+  CronJob,
+  CronAddParams,
+  CronSchedule,
+  CronPayload,
+  CronRunLogEntry,
+} from '@/stores/cron';
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -106,19 +112,17 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-zinc-700 text-left text-zinc-500">
-            <th className="pb-1 pr-3 font-medium">Run ID</th>
-            <th className="pb-1 pr-3 font-medium">Started</th>
-            <th className="pb-1 pr-3 font-medium">Duration</th>
-            <th className="pb-1 pr-3 font-medium">Status</th>
+            <th className="pr-3 pb-1 font-medium">Run ID</th>
+            <th className="pr-3 pb-1 font-medium">Started</th>
+            <th className="pr-3 pb-1 font-medium">Duration</th>
+            <th className="pr-3 pb-1 font-medium">Status</th>
             <th className="pb-1 font-medium">Error</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((run) => (
             <tr key={run.runId} className="border-b border-zinc-800">
-              <td className="py-1.5 pr-3 font-mono text-zinc-400">
-                {run.runId.slice(0, 8)}
-              </td>
+              <td className="py-1.5 pr-3 font-mono text-zinc-400">{run.runId.slice(0, 8)}</td>
               <td className="py-1.5 pr-3 text-zinc-400">
                 {new Date(run.startedAtMs).toLocaleString()}
               </td>
@@ -188,7 +192,20 @@ function AddJobForm({
         payload,
       });
     },
-    [name, description, scheduleKind, scheduleValue, timezone, sessionTarget, wakeMode, payloadKind, payloadMessage, agentId, enabled, onSubmit]
+    [
+      name,
+      description,
+      scheduleKind,
+      scheduleValue,
+      timezone,
+      sessionTarget,
+      wakeMode,
+      payloadKind,
+      payloadMessage,
+      agentId,
+      enabled,
+      onSubmit,
+    ]
   );
 
   return (
@@ -247,14 +264,24 @@ function AddJobForm({
         </div>
         <div>
           <label className="mb-1 block text-xs text-zinc-500">
-            {scheduleKind === 'cron' ? 'Cron Expression *' : scheduleKind === 'at' ? 'Date/Time *' : 'Interval *'}
+            {scheduleKind === 'cron'
+              ? 'Cron Expression *'
+              : scheduleKind === 'at'
+                ? 'Date/Time *'
+                : 'Interval *'}
           </label>
           <input
             type="text"
             value={scheduleValue}
             onChange={(e) => setScheduleValue(e.target.value)}
             className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
-            placeholder={scheduleKind === 'cron' ? '*/5 * * * *' : scheduleKind === 'at' ? '2025-01-01T12:00:00Z' : '30m'}
+            placeholder={
+              scheduleKind === 'cron'
+                ? '*/5 * * * *'
+                : scheduleKind === 'at'
+                  ? '2025-01-01T12:00:00Z'
+                  : '30m'
+            }
           />
         </div>
         <div>
@@ -391,19 +418,15 @@ function JobRow({ job }: { job: CronJob }) {
         onClick={handleExpand}
       >
         {/* Status Dot */}
-        <td className="py-2.5 pl-3 pr-2">
+        <td className="py-2.5 pr-2 pl-3">
           <div className={`h-2 w-2 rounded-full ${statusColor(job.state.lastStatus)}`} />
         </td>
 
         {/* Name */}
         <td className="py-2.5 pr-3">
           <div className="text-sm font-medium text-zinc-100">{job.name}</div>
-          {job.description && (
-            <div className="text-xs text-zinc-500">{job.description}</div>
-          )}
-          {job.agentId && (
-            <span className="text-xs text-zinc-600">agent: {job.agentId}</span>
-          )}
+          {job.description && <div className="text-xs text-zinc-500">{job.description}</div>}
+          {job.agentId && <span className="text-xs text-zinc-600">agent: {job.agentId}</span>}
         </td>
 
         {/* Schedule */}
@@ -419,9 +442,7 @@ function JobRow({ job }: { job: CronJob }) {
               handleToggleEnabled();
             }}
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-              job.enabled
-                ? 'bg-emerald-500/20 text-emerald-400'
-                : 'bg-zinc-700 text-zinc-500'
+              job.enabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-500'
             }`}
             type="button"
           >
@@ -569,14 +590,11 @@ export function Cron() {
     }
   }, [status, loadJobs]);
 
-  const handleAddJob = useCallback(
-    async (params: CronAddParams) => {
-      const { addJob } = useCronStore.getState();
-      await addJob(params);
-      setShowAddForm(false);
-    },
-    []
-  );
+  const handleAddJob = useCallback(async (params: CronAddParams) => {
+    const { addJob } = useCronStore.getState();
+    await addJob(params);
+    setShowAddForm(false);
+  }, []);
 
   const sortedJobs = useMemo(() => {
     return [...jobs].sort((a, b) => {
@@ -599,11 +617,11 @@ export function Cron() {
         <div>
           <h1 className="text-lg font-semibold text-zinc-100">Cron & Automation</h1>
           <div className="flex items-center gap-3 text-xs text-zinc-500">
-            <span>{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>
+            <span>
+              {jobs.length} job{jobs.length !== 1 ? 's' : ''}
+            </span>
             <span>{enabledCount} enabled</span>
-            {errorCount > 0 && (
-              <span className="text-red-400">{errorCount} with errors</span>
-            )}
+            {errorCount > 0 && <span className="text-red-400">{errorCount} with errors</span>}
           </div>
         </div>
 
@@ -656,12 +674,12 @@ export function Cron() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-zinc-700 text-left text-xs text-zinc-500">
-                  <th className="w-8 pb-2 pl-3 pr-2 font-medium" />
-                  <th className="pb-2 pr-3 font-medium">Name</th>
-                  <th className="pb-2 pr-3 font-medium">Schedule</th>
-                  <th className="pb-2 pr-3 font-medium">Enabled</th>
-                  <th className="pb-2 pr-3 font-medium">Next Run</th>
-                  <th className="pb-2 pr-3 font-medium">Actions</th>
+                  <th className="w-8 pr-2 pb-2 pl-3 font-medium" />
+                  <th className="pr-3 pb-2 font-medium">Name</th>
+                  <th className="pr-3 pb-2 font-medium">Schedule</th>
+                  <th className="pr-3 pb-2 font-medium">Enabled</th>
+                  <th className="pr-3 pb-2 font-medium">Next Run</th>
+                  <th className="pr-3 pb-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>

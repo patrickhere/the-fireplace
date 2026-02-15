@@ -5,7 +5,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useApprovalsStore } from '@/stores/approvals';
 import { useConnectionStore } from '@/stores/connection';
-import type { ExecApprovalRequest, ExecApprovalPattern, ExecApprovalsFile } from '@/stores/approvals';
+import type {
+  ExecApprovalRequest,
+  ExecApprovalPattern,
+  ExecApprovalsFile,
+} from '@/stores/approvals';
 
 // ---- Time Formatting Helper -----------------------------------------------
 
@@ -71,7 +75,7 @@ function ApprovalCard({
 
       {/* Command */}
       <div className="mb-2 rounded-md bg-zinc-900 p-2">
-        <code className="break-all font-mono text-sm text-zinc-100">{request.command}</code>
+        <code className="font-mono text-sm break-all text-zinc-100">{request.command}</code>
       </div>
 
       {/* Metadata */}
@@ -89,7 +93,9 @@ function ApprovalCard({
         {request.security && (
           <span>
             <span className="text-zinc-600">security:</span>{' '}
-            <span className={request.security === 'high' ? 'text-red-400' : ''}>{request.security}</span>
+            <span className={request.security === 'high' ? 'text-red-400' : ''}>
+              {request.security}
+            </span>
           </span>
         )}
         {request.sessionKey && (
@@ -131,20 +137,12 @@ function ApprovalCard({
 
 // ---- Pattern Row ----------------------------------------------------------
 
-function PatternRow({
-  pattern,
-  onRemove,
-}: {
-  pattern: ExecApprovalPattern;
-  onRemove: () => void;
-}) {
+function PatternRow({ pattern, onRemove }: { pattern: ExecApprovalPattern; onRemove: () => void }) {
   return (
     <div className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2">
       <div className={`h-2 w-2 rounded-full ${pattern.allow ? 'bg-emerald-500' : 'bg-red-500'}`} />
       <code className="flex-1 font-mono text-sm text-zinc-200">{pattern.pattern}</code>
-      <span className="text-xs text-zinc-500">
-        {pattern.allow ? 'allow' : 'deny'}
-      </span>
+      <span className="text-xs text-zinc-500">{pattern.allow ? 'allow' : 'deny'}</span>
       {pattern.note && (
         <span className="text-xs text-zinc-600" title={pattern.note}>
           ({pattern.note})
@@ -163,11 +161,7 @@ function PatternRow({
 
 // ---- Add Pattern Form -----------------------------------------------------
 
-function AddPatternForm({
-  onAdd,
-}: {
-  onAdd: (pattern: ExecApprovalPattern) => void;
-}) {
+function AddPatternForm({ onAdd }: { onAdd: (pattern: ExecApprovalPattern) => void }) {
   const [patternInput, setPatternInput] = useState('');
   const [allow, setAllow] = useState(true);
   const [note, setNote] = useState('');
@@ -432,14 +426,15 @@ export function Approvals() {
           <div className="space-y-6">
             {/* Pending Approvals Section */}
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">
+              <h2 className="mb-3 text-sm font-semibold tracking-wider text-zinc-500 uppercase">
                 Pending Approvals
               </h2>
               {pendingRequests.length === 0 ? (
                 <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 p-4 text-center">
                   <p className="text-sm text-zinc-500">No pending approval requests.</p>
                   <p className="mt-1 text-xs text-zinc-600">
-                    Approval requests will appear here in real-time when agents request exec permissions.
+                    Approval requests will appear here in real-time when agents request exec
+                    permissions.
                   </p>
                 </div>
               ) : (
@@ -458,7 +453,7 @@ export function Approvals() {
 
             {/* Allowlist Management Section */}
             <section>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">
+              <h2 className="mb-3 text-sm font-semibold tracking-wider text-zinc-500 uppercase">
                 Allowlist Management
               </h2>
 

@@ -90,9 +90,7 @@ function sortSessions(
 
 function SessionRow({ session }: { session: SessionUsageEntry }) {
   const totalPct =
-    session.totalTokens > 0
-      ? Math.round((session.outputTokens / session.totalTokens) * 100)
-      : 0;
+    session.totalTokens > 0 ? Math.round((session.outputTokens / session.totalTokens) * 100) : 0;
 
   return (
     <tr className="border-b border-zinc-700/50 last:border-0">
@@ -107,13 +105,12 @@ function SessionRow({ session }: { session: SessionUsageEntry }) {
         <span className="text-sm text-zinc-100">{formatTokens(session.outputTokens)}</span>
       </td>
       <td className="px-3 py-2 text-right">
-        <span className="text-sm font-medium text-zinc-100">{formatTokens(session.totalTokens)}</span>
+        <span className="text-sm font-medium text-zinc-100">
+          {formatTokens(session.totalTokens)}
+        </span>
         {/* Token ratio bar */}
         <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
-          <div
-            className="h-1 rounded-full bg-amber-500"
-            style={{ width: `${totalPct}%` }}
-          />
+          <div className="h-1 rounded-full bg-amber-500" style={{ width: `${totalPct}%` }} />
         </div>
       </td>
       <td className="px-3 py-2">
@@ -121,9 +118,7 @@ function SessionRow({ session }: { session: SessionUsageEntry }) {
           {session.model}
         </span>
       </td>
-      <td className="px-3 py-2 text-xs text-zinc-500">
-        {formatTimestamp(session.lastActivity)}
-      </td>
+      <td className="px-3 py-2 text-xs text-zinc-500">{formatTimestamp(session.lastActivity)}</td>
     </tr>
   );
 }
@@ -150,12 +145,13 @@ function SortHeader({
 
   return (
     <th
-      className={`cursor-pointer select-none px-3 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-200 ${
+      className={`cursor-pointer px-3 py-2 text-xs font-medium text-zinc-400 select-none hover:text-zinc-200 ${
         align === 'right' ? 'text-right' : 'text-left'
       } ${isActive ? 'text-amber-400' : ''}`}
       onClick={() => onSort(field)}
     >
-      {label}{arrow}
+      {label}
+      {arrow}
     </th>
   );
 }
@@ -163,13 +159,7 @@ function SortHeader({
 // ---- Main Usage View ------------------------------------------------------
 
 export function Usage() {
-  const {
-    usage,
-    sessionUsage,
-    isLoading,
-    error,
-    loadAll,
-  } = useUsageStore();
+  const { usage, sessionUsage, isLoading, error, loadAll } = useUsageStore();
 
   const { status } = useConnectionStore();
 

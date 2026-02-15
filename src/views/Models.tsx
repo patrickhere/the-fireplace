@@ -89,14 +89,7 @@ function ModelCard({
 // ---- Main Models View -----------------------------------------------------
 
 export function Models() {
-  const {
-    models,
-    currentModelId,
-    isLoading,
-    error,
-    loadModels,
-    setModel,
-  } = useModelsStore();
+  const { models, currentModelId, isLoading, error, loadModels, setModel } = useModelsStore();
 
   const { status } = useConnectionStore();
 
@@ -169,9 +162,7 @@ export function Models() {
         {isLoading && models.length === 0 ? (
           <div className="text-sm text-zinc-400">Loading models...</div>
         ) : models.length === 0 ? (
-          <div className="text-sm text-zinc-500">
-            No models available. Click "Refresh" to load.
-          </div>
+          <div className="text-sm text-zinc-500">No models available. Click "Refresh" to load.</div>
         ) : (
           <div className="space-y-6">
             {groupedModels.map(([provider, providerModels]) => (
