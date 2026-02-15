@@ -2,7 +2,7 @@
 name: operations
 description: Operations views specialist. Use for exec approvals, cron job management, skills management, device pairing, log viewer, health diagnostics, and the debug method caller.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: opus
+model: sonnet
 ---
 
 You are the operations views specialist for The Fireplace, a Tauri v2 macOS/iOS mission control app for OpenClaw.

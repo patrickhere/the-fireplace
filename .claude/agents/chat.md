@@ -2,7 +2,7 @@
 name: chat
 description: Chat interface specialist. Use for the chat view, streaming message rendering, markdown/code blocks, file attachments, abort, session selector, and the chat Zustand store.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: opus
+model: sonnet
 ---
 
 You are the chat interface specialist for The Fireplace, a Tauri v2 macOS/iOS mission control app for OpenClaw.
