@@ -1,6 +1,18 @@
+// ---------------------------------------------------------------------------
+// Gateway Connection Store (Zustand)
+// ---------------------------------------------------------------------------
+
 import { create } from 'zustand';
 import { GatewayClient } from '@/gateway/client';
-import type { GatewayConnectionState, GatewayPolicy, StateVersion } from '@/gateway/types';
+import type {
+  GatewayConnectionState,
+  GatewayPolicy,
+  StateVersion,
+  EventHandler,
+  EventFrame,
+  Unsubscribe,
+  RequestOptions,
+} from '@/gateway/types';
 import { buildClientInfo, buildDeviceIdentity } from '@/gateway/protocol';
 
 // ---- Store Types ----------------------------------------------------------
@@ -13,33 +25,46 @@ interface ServerInfo {
   policy: GatewayPolicy | null;
 }
 
-interface ConnectionStore {
-  // State
-  state: GatewayConnectionState;
+interface ConnectionState {
+  // -- Reactive state (drives UI)
+  status: GatewayConnectionState;
   serverInfo: ServerInfo | null;
   stateVersion: StateVersion;
   error: string | null;
   gatewayUrl: string;
   reconnectAttempt: number;
 
-  // The client instance (not serializable — kept as a ref)
+  // -- Client instance (not serializable, kept as a ref)
   client: GatewayClient | null;
 
-  // Actions
+  // -- Actions
   setGatewayUrl: (url: string) => void;
   connect: () => Promise<void>;
   disconnect: () => void;
   destroy: () => void;
+
+  // -- Request forwarding
+  request: <T = unknown>(method: string, params?: unknown, options?: RequestOptions) => Promise<T>;
+
+  // -- Event forwarding
+  subscribe: <T = unknown>(event: string, handler: EventHandler<T>) => Unsubscribe;
+  subscribeAll: (handler: EventHandler<EventFrame>) => Unsubscribe;
 }
 
 // ---- Default Gateway URL --------------------------------------------------
 
-const DEFAULT_GATEWAY_URL = 'wss://patricks-macmini.pangolin-typhon.ts.net/';
+const DEFAULT_GATEWAY_URL = 'ws://127.0.0.1:18789';
+
+// ---- Noop unsubscribe (returned when client is not connected) -------------
+
+const NOOP_UNSUBSCRIBE: Unsubscribe = () => {
+  /* no-op */
+};
 
 // ---- Store ----------------------------------------------------------------
 
-export const useConnectionStore = create<ConnectionStore>((set, get) => ({
-  state: 'disconnected',
+export const useConnectionStore = create<ConnectionState>((set, get) => ({
+  status: 'disconnected',
   serverInfo: null,
   stateVersion: { presence: 0, health: 0 },
   error: null,
@@ -59,7 +84,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       existingClient.destroy();
     }
 
-    set({ error: null, state: 'connecting' });
+    set({ error: null, status: 'connecting' });
 
     const clientInfo = buildClientInfo();
     // Device identity uses a placeholder nonce that will be replaced
@@ -74,10 +99,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
     // Sync state changes into Zustand
     client.onStateChange((newState) => {
-      const update: Partial<ConnectionStore> = { state: newState };
+      const update: Partial<ConnectionState> = { status: newState };
 
       if (newState === 'error') {
-        update.error = 'Connection failed';
+        const lastErr = client.lastError;
+        update.error = lastErr ? `${lastErr.code}: ${lastErr.message}` : 'Connection failed';
       }
 
       if (newState === 'connected') {
@@ -86,7 +112,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         update.serverInfo = {
           version: client.serverVersion,
           serverId: client.serverId,
-          protocol: 3,
+          protocol: client.serverProtocol ?? 3,
           features: client.serverFeatures,
           policy: client.serverPolicy,
         };
@@ -94,7 +120,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       }
 
       if (newState === 'reconnecting') {
-        update.reconnectAttempt = (get().reconnectAttempt ?? 0) + 1;
+        update.reconnectAttempt = client.reconnectAttempts;
       }
 
       if (newState === 'disconnected') {
@@ -111,7 +137,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : 'Unknown connection error',
-        state: 'error',
+        status: 'error',
       });
       throw err;
     }
@@ -122,7 +148,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     if (client) {
       client.disconnect();
     }
-    set({ state: 'disconnected', serverInfo: null, error: null, reconnectAttempt: 0 });
+    set({
+      status: 'disconnected',
+      serverInfo: null,
+      error: null,
+      reconnectAttempt: 0,
+    });
   },
 
   destroy: () => {
@@ -132,10 +163,40 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
     set({
       client: null,
-      state: 'disconnected',
+      status: 'disconnected',
       serverInfo: null,
       error: null,
       reconnectAttempt: 0,
     });
+  },
+
+  request: async <T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: RequestOptions
+  ): Promise<T> => {
+    const { client } = get();
+    if (!client) {
+      throw new Error('Cannot send request: no gateway client');
+    }
+    return client.request<T>(method, params, options);
+  },
+
+  subscribe: <T = unknown>(event: string, handler: EventHandler<T>): Unsubscribe => {
+    const { client } = get();
+    if (!client) {
+      console.warn(`[ConnectionStore] Cannot subscribe to "${event}": no gateway client`);
+      return NOOP_UNSUBSCRIBE;
+    }
+    return client.on<T>(event, handler);
+  },
+
+  subscribeAll: (handler: EventHandler<EventFrame>): Unsubscribe => {
+    const { client } = get();
+    if (!client) {
+      console.warn('[ConnectionStore] Cannot subscribe to all events: no gateway client');
+      return NOOP_UNSUBSCRIBE;
+    }
+    return client.onAny(handler);
   },
 }));

@@ -1,8 +1,14 @@
 // ---------------------------------------------------------------------------
-// OpenClaw Gateway Protocol v3 — Frame Builders & Helpers
+// OpenClaw Gateway Protocol v3 -- Frame Builders & Helpers
 // ---------------------------------------------------------------------------
 
-import type { RequestFrame, ConnectParams, ConnectClientInfo, ConnectDevice } from './types';
+import type {
+  RequestFrame,
+  ConnectParams,
+  ConnectClientInfo,
+  ConnectDevice,
+  GatewayFrame,
+} from './types';
 
 // ---- ID Generation --------------------------------------------------------
 
@@ -108,6 +114,19 @@ export function buildClientInfo(): ConnectClientInfo {
     platform,
     mode: 'ui',
   };
+}
+
+// ---- Frame Type Guards ----------------------------------------------------
+
+/**
+ * Type guard to validate that a parsed JSON value looks like a GatewayFrame.
+ * Does not validate every field -- just checks enough to dispatch safely.
+ */
+export function isValidFrame(value: unknown): value is GatewayFrame {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  const t = obj['type'];
+  return t === 'req' || t === 'res' || t === 'event';
 }
 
 // ---- App Version Constant -------------------------------------------------

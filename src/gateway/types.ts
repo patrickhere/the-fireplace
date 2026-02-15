@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// OpenClaw Gateway Protocol v3 — Type Definitions
+// OpenClaw Gateway Protocol v3 -- Type Definitions
 // ---------------------------------------------------------------------------
 
 // ---- Wire Frame Types -----------------------------------------------------
@@ -173,3 +173,32 @@ export interface ReconnectState {
   nextDelayMs: number;
   timer: ReturnType<typeof setTimeout> | null;
 }
+
+// ---- Side-Effecting Methods -----------------------------------------------
+
+/** Methods that mutate state and should carry an idempotency key. */
+export const SIDE_EFFECTING_METHODS: ReadonlySet<string> = new Set([
+  'chat.send',
+  'config.apply',
+  'config.set',
+  'session.create',
+  'session.cancel',
+  'session.delete',
+  'exec.approve',
+  'exec.deny',
+  'cron.create',
+  'cron.update',
+  'cron.delete',
+  'cron.trigger',
+  'channel.create',
+  'channel.update',
+  'channel.delete',
+  'agent.create',
+  'agent.update',
+  'agent.delete',
+  'device.approve',
+  'device.revoke',
+  'skill.install',
+  'skill.uninstall',
+  'model.set',
+]);

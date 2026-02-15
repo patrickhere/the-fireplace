@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import { useConnectionStore } from '@/stores/connection';
 
 export function ConnectionStatus() {
-  const { state, serverInfo, error, reconnectAttempt } = useConnectionStore();
+  const { status, serverInfo, error, reconnectAttempt } = useConnectionStore();
 
   const statusConfig = {
     connected: {
@@ -42,7 +42,7 @@ export function ConnectionStatus() {
     },
   };
 
-  const config = statusConfig[state];
+  const config = statusConfig[status];
   const versionInfo = serverInfo
     ? `v${serverInfo.version} (protocol ${serverInfo.protocol})`
     : null;

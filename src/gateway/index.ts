@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Gateway module — public API
+// Gateway module -- public API
 // ---------------------------------------------------------------------------
 
 export { GatewayClient, GatewayRequestError } from './client';
@@ -14,6 +14,7 @@ export {
   generateIdempotencyKey,
   getOrCreateDeviceFingerprint,
   detectPlatform,
+  isValidFrame,
 } from './protocol';
 
 export type {
@@ -45,3 +46,5 @@ export type {
   GatewayClientConfig,
   ReconnectState,
 } from './types';
+
+export { SIDE_EFFECTING_METHODS } from './types';

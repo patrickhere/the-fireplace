@@ -1,9 +1,8 @@
 // ---------------------------------------------------------------------------
-// OpenClaw Gateway Protocol v3 — GatewayClient
+// OpenClaw Gateway Protocol v3 -- GatewayClient
 // ---------------------------------------------------------------------------
 
 import type {
-  GatewayFrame,
   ResponseFrame,
   EventFrame,
   ConnectChallengePayload,
@@ -19,12 +18,13 @@ import type {
   ReconnectState,
   GatewayError,
 } from './types';
+import { SIDE_EFFECTING_METHODS } from './types';
 import {
   buildRequestFrame,
   buildConnectParams,
-  buildClientInfo,
   buildDeviceIdentity,
   generateIdempotencyKey,
+  isValidFrame,
 } from './protocol';
 
 // ---- Constants ------------------------------------------------------------
@@ -33,6 +33,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_RECONNECT_MIN_MS = 1_000;
 const DEFAULT_RECONNECT_MAX_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
+const IDEMPOTENCY_CACHE_MAX = 500;
+const IDEMPOTENCY_CACHE_TTL_MS = 5 * 60_000;
 
 // ---- Custom Error ---------------------------------------------------------
 
@@ -59,6 +61,13 @@ export type StateChangeListener = (
   oldState: GatewayConnectionState
 ) => void;
 
+// ---- Idempotency Cache Entry ----------------------------------------------
+
+interface IdempotencyCacheEntry {
+  key: string;
+  timestamp: number;
+}
+
 // ---- GatewayClient --------------------------------------------------------
 
 export class GatewayClient {
@@ -77,6 +86,7 @@ export class GatewayClient {
   // -- Connection state
   private _state: GatewayConnectionState = 'disconnected';
   private stateListeners = new Set<StateChangeListener>();
+  private _lastError: GatewayError | null = null;
 
   // -- Handshake
   private handshakeResolve: (() => void) | null = null;
@@ -88,7 +98,10 @@ export class GatewayClient {
   private _serverFeatures: string[] = [];
   private _serverVersion: string | null = null;
   private _serverId: string | null = null;
+  private _serverProtocol: number | null = null;
   private _authToken: string | null = null;
+  private _authExpiresAt: number | null = null;
+  private _snapshot: unknown = null;
 
   // -- State version tracking
   private _stateVersion: StateVersion = { presence: 0, health: 0 };
@@ -114,6 +127,10 @@ export class GatewayClient {
 
   // -- Tick / watchdog
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private _lastTickSentAt = 0;
+
+  // -- Idempotency key tracking
+  private idempotencyCache: IdempotencyCacheEntry[] = [];
 
   // ---- Constructor --------------------------------------------------------
 
@@ -133,6 +150,10 @@ export class GatewayClient {
     return this._state;
   }
 
+  get lastError(): GatewayError | null {
+    return this._lastError;
+  }
+
   get serverPolicy(): GatewayPolicy | null {
     return this._serverPolicy;
   }
@@ -149,9 +170,23 @@ export class GatewayClient {
     return this._serverId;
   }
 
+  get serverProtocol(): number | null {
+    return this._serverProtocol;
+  }
+
   /** Auth token returned by the server during handshake, if any. */
   get authToken(): string | null {
     return this._authToken;
+  }
+
+  /** Auth token expiration timestamp (ms since epoch), if provided. */
+  get authExpiresAt(): number | null {
+    return this._authExpiresAt;
+  }
+
+  /** Snapshot data received during the handshake, if any. */
+  get snapshot(): unknown {
+    return this._snapshot;
   }
 
   get stateVersion(): StateVersion {
@@ -164,6 +199,14 @@ export class GatewayClient {
 
   get url(): string {
     return this.config.url;
+  }
+
+  get reconnectAttempts(): number {
+    return this.reconnect.attempts;
+  }
+
+  get isConnected(): boolean {
+    return this._state === 'connected';
   }
 
   // ---- State Management ---------------------------------------------------
@@ -194,6 +237,12 @@ export class GatewayClient {
   /**
    * Open a WebSocket connection and perform the full v3 handshake.
    *
+   * Flow:
+   *   1. Client opens WebSocket to gateway URL
+   *   2. Server sends `connect.challenge` event with { nonce, ts }
+   *   3. Client sends `connect` request with client info, role, scopes, auth, device
+   *   4. Server responds with `hello-ok` containing features, snapshot, policy, auth
+   *
    * Resolves when the handshake completes (hello-ok received).
    * Rejects if the WebSocket fails to open or the handshake times out.
    */
@@ -203,12 +252,13 @@ export class GatewayClient {
       this._state === 'connecting' ||
       this._state === 'authenticating'
     ) {
-      console.warn('[Gateway] Already connected or connecting — ignoring connect()');
+      console.warn('[Gateway] Already connected or connecting -- ignoring connect()');
       return;
     }
 
     this.intentionalClose = false;
     this.cancelReconnectTimer();
+    this._lastError = null;
 
     const url = urlOverride ?? this.config.url;
 
@@ -228,7 +278,7 @@ export class GatewayClient {
       this.handshakeResolve = resolve;
       this.handshakeReject = reject;
 
-      // Handshake timeout — if server never sends challenge or hello-ok
+      // Handshake timeout -- if server never sends challenge or hello-ok
       this.handshakeTimer = setTimeout(() => {
         this.handshakeTimer = null;
         const err = new Error('Handshake timeout: server did not complete v3 handshake');
@@ -237,15 +287,15 @@ export class GatewayClient {
 
       this.ws.onopen = () => {
         console.log('[Gateway] WebSocket transport open, awaiting connect.challenge...');
-        // Do NOT resolve here — we wait for the full handshake
+        // Do NOT resolve here -- we wait for the full handshake
       };
 
       this.ws.onmessage = (event: MessageEvent) => {
         this.handleMessage(event.data as string);
       };
 
-      this.ws.onerror = (event: Event) => {
-        console.error('[Gateway] WebSocket error:', event);
+      this.ws.onerror = (_event: Event) => {
+        console.error('[Gateway] WebSocket error');
         // onerror is always followed by onclose, so we let onclose handle state
       };
 
@@ -292,6 +342,9 @@ export class GatewayClient {
   /**
    * Send an RPC request and wait for the matching response.
    *
+   * For side-effecting methods (chat.send, config.apply, etc.), an idempotency
+   * key is automatically generated if one is not provided in the options.
+   *
    * @param method - The RPC method name (e.g. "sessions.list")
    * @param params - Optional parameters for the method
    * @param options - Timeout, idempotency key, abort signal
@@ -306,13 +359,30 @@ export class GatewayClient {
       throw new Error(`Cannot send request: state is "${this._state}", expected "connected"`);
     }
 
+    // Determine idempotency key
+    let idempotencyKey = options?.idempotencyKey;
+    if (!idempotencyKey && SIDE_EFFECTING_METHODS.has(method)) {
+      idempotencyKey = generateIdempotencyKey();
+    }
+
+    // Check idempotency cache for duplicate submissions
+    if (idempotencyKey && this.hasIdempotencyKey(idempotencyKey)) {
+      throw new Error(`Duplicate request: idempotency key "${idempotencyKey}" was already used`);
+    }
+
     const frame = buildRequestFrame(method, params);
     const timeoutMs = options?.timeoutMs ?? this.config.defaultTimeoutMs;
 
-    // Inject idempotency key into params if provided or if it is a
-    // side-effecting method
-    if (options?.idempotencyKey && typeof frame.params === 'object' && frame.params !== null) {
-      (frame.params as Record<string, unknown>)._idempotencyKey = options.idempotencyKey;
+    // Inject idempotency key into params if present
+    if (idempotencyKey && typeof frame.params === 'object' && frame.params !== null) {
+      (frame.params as Record<string, unknown>)._idempotencyKey = idempotencyKey;
+    } else if (idempotencyKey && frame.params === undefined) {
+      frame.params = { _idempotencyKey: idempotencyKey };
+    }
+
+    // Track the idempotency key
+    if (idempotencyKey) {
+      this.trackIdempotencyKey(idempotencyKey);
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -350,8 +420,8 @@ export class GatewayClient {
   }
 
   /**
-   * Convenience: send a side-effecting request with an auto-generated
-   * idempotency key.
+   * Convenience: send a side-effecting request with an explicit
+   * auto-generated idempotency key.
    */
   async requestWithIdempotency<T = unknown>(
     method: string,
@@ -411,30 +481,44 @@ export class GatewayClient {
     };
   }
 
+  /**
+   * Subscribe to an event, automatically unsubscribe after the first delivery.
+   */
+  once<T = unknown>(event: string, handler: EventHandler<T>): Unsubscribe {
+    const unsub = this.on<T>(event, (payload) => {
+      unsub();
+      handler(payload);
+    });
+    return unsub;
+  }
+
   // ---- Internals: Message Handling ----------------------------------------
 
   private handleMessage(raw: string): void {
-    let frame: GatewayFrame;
+    let parsed: unknown;
     try {
-      frame = JSON.parse(raw) as GatewayFrame;
+      parsed = JSON.parse(raw);
     } catch (err) {
       console.error('[Gateway] Failed to parse incoming frame:', err);
       return;
     }
 
-    switch (frame.type) {
+    if (!isValidFrame(parsed)) {
+      console.warn('[Gateway] Received invalid frame (no type field):', parsed);
+      return;
+    }
+
+    switch (parsed.type) {
       case 'res':
-        this.handleResponse(frame);
+        this.handleResponse(parsed);
         break;
       case 'event':
-        this.handleEvent(frame);
+        this.handleEvent(parsed);
         break;
       case 'req':
         // Server-initiated requests are not expected in v3 from the client side.
-        console.warn('[Gateway] Received unexpected server-initiated request:', frame);
+        console.warn('[Gateway] Received unexpected server-initiated request:', parsed);
         break;
-      default:
-        console.warn('[Gateway] Unknown frame type:', frame);
     }
   }
 
@@ -451,6 +535,7 @@ export class GatewayClient {
     if (frame.ok) {
       pending.resolve(frame.payload);
     } else if (frame.error) {
+      this._lastError = frame.error;
       pending.reject(new GatewayRequestError(frame.error));
     } else {
       pending.reject(new Error(`Request failed without error details: ${pending.method}`));
@@ -503,21 +588,27 @@ export class GatewayClient {
 
   // ---- Internals: Handshake -----------------------------------------------
 
+  /**
+   * Handle the connect.challenge event from the server.
+   *
+   * Step 2 of the v3 handshake: build and send the `connect` request
+   * with client identity, role, scopes, auth, and device info.
+   */
   private handleChallenge(challenge: ConnectChallengePayload): void {
     console.log(
       `[Gateway] Received connect.challenge: nonce=${challenge.nonce} ts=${challenge.ts}`
     );
     this.setState('challenged');
 
-    const clientInfo = this.config.clientInfo ?? buildClientInfo();
-    const device = this.config.device ?? buildDeviceIdentity(challenge.nonce);
+    // Build device identity using the challenge nonce
+    const device = buildDeviceIdentity(challenge.nonce);
 
-    // If device was configured without knowing the nonce, patch it now
-    if (device.signedNonce === '' || device.signedNonce === 'pending') {
-      device.signedNonce = challenge.nonce;
-    }
-
-    const connectParams = buildConnectParams(clientInfo, device);
+    const connectParams = buildConnectParams(
+      this.config.clientInfo,
+      device,
+      ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals'],
+      this._authToken ?? undefined
+    );
 
     const connectFrame = buildRequestFrame('connect', connectParams);
 
@@ -546,6 +637,12 @@ export class GatewayClient {
     this.send(connectFrame);
   }
 
+  /**
+   * Handle the hello-ok response from the server.
+   *
+   * Step 4 of the v3 handshake: store server info, start tick watchdog,
+   * and mark the connection as established.
+   */
   private handleHelloOk(payload: HelloOkPayload): void {
     if (payload.type !== 'hello-ok') {
       const err = new Error(`Expected hello-ok, got: ${payload.type}`);
@@ -554,7 +651,8 @@ export class GatewayClient {
     }
 
     console.log(
-      `[Gateway] Handshake complete: protocol=${payload.protocol} features=[${payload.features.join(', ')}]`
+      `[Gateway] Handshake complete: protocol=${payload.protocol} ` +
+        `features=[${payload.features.join(', ')}]`
     );
 
     // Store server info
@@ -562,8 +660,11 @@ export class GatewayClient {
     this._serverFeatures = payload.features;
     this._serverVersion = payload.version ?? null;
     this._serverId = payload.serverId ?? null;
+    this._serverProtocol = payload.protocol;
+    this._snapshot = payload.snapshot ?? null;
     if (payload.auth?.token) {
       this._authToken = payload.auth.token;
+      this._authExpiresAt = payload.auth.expiresAt ?? null;
     }
 
     // Reset reconnect state on successful connection
@@ -582,17 +683,28 @@ export class GatewayClient {
 
   // ---- Internals: Tick / Watchdog -----------------------------------------
 
+  /**
+   * Start the tick watchdog timer based on the server's policy.tickIntervalMs.
+   *
+   * Sends a lightweight `tick` request at the specified interval to keep the
+   * connection alive and signal liveness to the server.
+   */
   private startTick(): void {
     this.stopTick();
     const intervalMs = this._serverPolicy?.tickIntervalMs;
     if (!intervalMs || intervalMs <= 0) return;
 
     this.tickTimer = setInterval(() => {
-      // Send a lightweight ping/tick to keep the connection alive
-      // The protocol uses a "tick" request that the server expects
-      // at the specified interval
       if (this._state === 'connected' && this.ws?.readyState === WebSocket.OPEN) {
-        this.send(buildRequestFrame('tick'));
+        this._lastTickSentAt = Date.now();
+        // Send tick as a fire-and-forget request. We do not register it as
+        // a pending request to avoid timeout noise on keepalive frames.
+        const frame = buildRequestFrame('tick');
+        try {
+          this.send(frame);
+        } catch (err) {
+          console.warn('[Gateway] Failed to send tick:', err);
+        }
       }
     }, intervalMs);
 
@@ -604,6 +716,11 @@ export class GatewayClient {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+  }
+
+  /** Timestamp (ms since epoch) of the last tick sent. */
+  get lastTickSentAt(): number {
+    return this._lastTickSentAt;
   }
 
   // ---- Internals: Send ----------------------------------------------------
@@ -647,13 +764,18 @@ export class GatewayClient {
     this.scheduleReconnect();
   }
 
+  /**
+   * Schedule an automatic reconnection attempt with exponential backoff
+   * and jitter. Starts at reconnectMinMs (default 1s), doubling each
+   * attempt up to reconnectMaxMs (default 30s).
+   */
   private scheduleReconnect(): void {
     this.setState('reconnecting');
 
     const delay = this.reconnect.nextDelayMs;
     this.reconnect.attempts += 1;
 
-    // Exponential backoff with jitter
+    // Exponential backoff with jitter (up to 30% of the delay)
     const jitter = Math.random() * 0.3 * delay;
     const nextDelay = Math.min(delay * 2, this.config.reconnectMaxMs);
     this.reconnect.nextDelayMs = nextDelay;
@@ -666,7 +788,7 @@ export class GatewayClient {
       console.log(`[Gateway] Reconnect attempt #${this.reconnect.attempts}`);
       this.connect().catch((err) => {
         console.error('[Gateway] Reconnect failed:', err);
-        // handleClose will be called by WebSocket close, which schedules the next retry
+        // handleClose will be called by WebSocket close, which schedules next retry
       });
     }, actualDelay);
   }
@@ -683,6 +805,38 @@ export class GatewayClient {
     this.cancelReconnectTimer();
     this.reconnect.attempts = 0;
     this.reconnect.nextDelayMs = this.config.reconnectMinMs;
+  }
+
+  // ---- Internals: Idempotency Key Tracking --------------------------------
+
+  /**
+   * Track a used idempotency key. Evicts stale entries beyond the cache
+   * size limit and TTL.
+   */
+  private trackIdempotencyKey(key: string): void {
+    const now = Date.now();
+
+    // Evict expired entries
+    this.idempotencyCache = this.idempotencyCache.filter(
+      (entry) => now - entry.timestamp < IDEMPOTENCY_CACHE_TTL_MS
+    );
+
+    // Evict oldest if at capacity
+    if (this.idempotencyCache.length >= IDEMPOTENCY_CACHE_MAX) {
+      this.idempotencyCache.splice(0, this.idempotencyCache.length - IDEMPOTENCY_CACHE_MAX + 1);
+    }
+
+    this.idempotencyCache.push({ key, timestamp: now });
+  }
+
+  /**
+   * Check if an idempotency key has been used recently.
+   */
+  private hasIdempotencyKey(key: string): boolean {
+    const now = Date.now();
+    return this.idempotencyCache.some(
+      (entry) => entry.key === key && now - entry.timestamp < IDEMPOTENCY_CACHE_TTL_MS
+    );
   }
 
   // ---- Internals: Cleanup -------------------------------------------------
@@ -734,5 +888,7 @@ export class GatewayClient {
     this.eventHandlers.clear();
     this.wildcardHandlers.clear();
     this.stateListeners.clear();
+    this.idempotencyCache = [];
+    this._snapshot = null;
   }
 }
