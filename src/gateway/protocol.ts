@@ -192,7 +192,7 @@ export function buildClientInfo(): ConnectClientInfo {
     id: platform === 'ios' ? 'openclaw-ios' : 'openclaw-macos',
     version: __APP_VERSION__,
     platform,
-    mode: 'ui',
+    mode: 'webchat', // Use webchat mode to avoid hashes.sha512 requirement
   };
 }
 
