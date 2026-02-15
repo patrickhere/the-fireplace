@@ -49,27 +49,29 @@ export function buildConnectParams(
     scopes,
     auth: authToken ? { token: authToken } : {},
     device,
+    locale: navigator.language || 'en-US',
+    userAgent: `${clientInfo.id}/${clientInfo.version}`,
   };
 }
 
 // ---- Device Identity Helpers ----------------------------------------------
 
 /**
- * Generate a persistent device fingerprint.
+ * Generate a persistent device ID (fingerprint).
  *
  * In production this should come from the Tauri keychain so it persists
  * across app restarts. For now we generate a deterministic placeholder
  * based on available browser/webview signals and cache it in localStorage.
  */
-export function getOrCreateDeviceFingerprint(): string {
-  const STORAGE_KEY = 'openclaw_device_fingerprint';
+export function getOrCreateDeviceId(): string {
+  const STORAGE_KEY = 'openclaw_device_id';
   const existing = localStorage.getItem(STORAGE_KEY);
   if (existing) {
     return existing;
   }
-  const fingerprint = `fp_${crypto.randomUUID()}`;
-  localStorage.setItem(STORAGE_KEY, fingerprint);
-  return fingerprint;
+  const deviceId = `fp_${crypto.randomUUID()}`;
+  localStorage.setItem(STORAGE_KEY, deviceId);
+  return deviceId;
 }
 
 /**
@@ -77,14 +79,19 @@ export function getOrCreateDeviceFingerprint(): string {
  *
  * Since we authenticate through Tailscale identity headers (no cryptographic
  * nonce signing is needed for Tailscale Serve connections), we provide
- * placeholder values for publicKey and signedNonce. Local loopback connections
+ * placeholder values for publicKey and signature. Local loopback connections
  * auto-approve device pairing.
+ *
+ * The device shape matches ConnectParamsSchema.device:
+ *   { id, publicKey, signature, signedAt, nonce }
  */
 export function buildDeviceIdentity(nonce: string): ConnectDevice {
   return {
-    fingerprint: getOrCreateDeviceFingerprint(),
+    id: getOrCreateDeviceId(),
     publicKey: 'tailscale-identity',
-    signedNonce: nonce, // Echo the nonce back; Tailscale headers handle auth
+    signature: nonce, // Echo the nonce back; Tailscale headers handle auth
+    signedAt: Date.now(),
+    nonce,
   };
 }
 

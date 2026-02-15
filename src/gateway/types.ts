@@ -1,5 +1,9 @@
 // ---------------------------------------------------------------------------
 // OpenClaw Gateway Protocol v3 -- Type Definitions
+//
+// These types are derived from the TypeBox schemas in
+// docs/protocol/schema/*.d.ts and the protocol spec in
+// docs/gateway/protocol.md. Run /protocol-check to verify alignment.
 // ---------------------------------------------------------------------------
 
 // ---- Wire Frame Types -----------------------------------------------------
@@ -59,53 +63,151 @@ export interface ConnectChallengePayload {
 
 // ---- Handshake: connect request params ------------------------------------
 
+/**
+ * Allowed client IDs per the GatewayClientIdSchema.
+ * Only the IDs relevant to The Fireplace are typically used.
+ */
+export type GatewayClientId =
+  | 'cli'
+  | 'test'
+  | 'webchat-ui'
+  | 'openclaw-control-ui'
+  | 'webchat'
+  | 'gateway-client'
+  | 'openclaw-macos'
+  | 'openclaw-ios'
+  | 'openclaw-android'
+  | 'node-host'
+  | 'fingerprint'
+  | 'openclaw-probe';
+
+/**
+ * Allowed client modes per the GatewayClientModeSchema.
+ */
+export type GatewayClientMode = 'cli' | 'node' | 'test' | 'webchat' | 'ui' | 'backend' | 'probe';
+
 export interface ConnectClientInfo {
-  id: string;
+  id: GatewayClientId;
   version: string;
   platform: string;
-  mode: 'ui' | 'operator' | 'plugin';
+  mode: GatewayClientMode;
+  displayName?: string;
+  deviceFamily?: string;
+  modelIdentifier?: string;
+  instanceId?: string;
 }
 
 export interface ConnectAuth {
   token?: string;
+  password?: string;
 }
 
+/**
+ * Device identity for the connect handshake.
+ * Field names match the ConnectParamsSchema.device shape exactly:
+ *   id, publicKey, signature, signedAt, nonce
+ */
 export interface ConnectDevice {
-  fingerprint: string;
+  id: string;
   publicKey: string;
-  signedNonce: string;
+  signature: string;
+  signedAt: number;
+  nonce?: string;
 }
 
 export interface ConnectParams {
   minProtocol: number;
   maxProtocol: number;
   client: ConnectClientInfo;
-  role: 'operator' | 'viewer';
-  scopes: string[];
-  auth: ConnectAuth;
-  device: ConnectDevice;
+  role?: string;
+  scopes?: string[];
+  caps?: string[];
+  commands?: string[];
+  permissions?: Record<string, boolean>;
+  pathEnv?: string;
+  auth?: ConnectAuth;
+  locale?: string;
+  userAgent?: string;
+  device?: ConnectDevice;
 }
 
 // ---- Handshake: hello-ok response payload ---------------------------------
 
+export interface HelloOkServer {
+  version: string;
+  commit?: string;
+  host?: string;
+  connId: string;
+}
+
+export interface HelloOkFeatures {
+  methods: string[];
+  events: string[];
+}
+
+/** Presence entry in the snapshot. */
+export interface PresenceEntry {
+  host?: string;
+  ip?: string;
+  version?: string;
+  platform?: string;
+  deviceFamily?: string;
+  modelIdentifier?: string;
+  mode?: string;
+  lastInputSeconds?: number;
+  reason?: string;
+  tags?: string[];
+  text?: string;
+  ts: number;
+  deviceId?: string;
+  roles?: string[];
+  scopes?: string[];
+  instanceId?: string;
+}
+
+export interface SessionDefaults {
+  defaultAgentId: string;
+  mainKey: string;
+  mainSessionKey: string;
+  scope?: string;
+}
+
+export type AuthMode = 'none' | 'token' | 'password' | 'trusted-proxy';
+
+/** Snapshot data returned in hello-ok. */
+export interface Snapshot {
+  presence: PresenceEntry[];
+  health: unknown;
+  stateVersion: StateVersion;
+  uptimeMs: number;
+  configPath?: string;
+  stateDir?: string;
+  sessionDefaults?: SessionDefaults;
+  authMode?: AuthMode;
+}
+
 export interface GatewayPolicy {
+  maxPayload: number;
+  maxBufferedBytes: number;
   tickIntervalMs: number;
-  maxIdleMs?: number;
-  maxRequestsPerTick?: number;
+}
+
+export interface HelloOkAuth {
+  deviceToken: string;
+  role: string;
+  scopes: string[];
+  issuedAtMs?: number;
 }
 
 export interface HelloOkPayload {
   type: 'hello-ok';
   protocol: number;
-  serverId?: string;
-  version?: string;
-  features: string[];
-  snapshot?: unknown;
+  server: HelloOkServer;
+  features: HelloOkFeatures;
+  snapshot: Snapshot;
+  canvasHostUrl?: string;
+  auth?: HelloOkAuth;
   policy: GatewayPolicy;
-  auth?: {
-    token?: string;
-    expiresAt?: number;
-  };
 }
 
 // ---- Connection State -----------------------------------------------------
@@ -162,8 +264,6 @@ export interface GatewayClientConfig {
   maxReconnectAttempts?: number;
   /** Client identity info. */
   clientInfo: ConnectClientInfo;
-  /** Device identity for the handshake. */
-  device: ConnectDevice;
 }
 
 // ---- Reconnect State (internal) -------------------------------------------
@@ -174,31 +274,72 @@ export interface ReconnectState {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+// ---- Chat Event Payload ---------------------------------------------------
+
+export interface ChatEventPayload {
+  runId: string;
+  sessionKey: string;
+  seq: number;
+  state: 'delta' | 'final' | 'aborted' | 'error';
+  message?: unknown;
+  errorMessage?: string;
+  usage?: unknown;
+  stopReason?: string;
+}
+
+// ---- Tick / Shutdown Event Payloads ---------------------------------------
+
+export interface TickEventPayload {
+  ts: number;
+}
+
+export interface ShutdownEventPayload {
+  reason: string;
+  restartExpectedMs?: number;
+}
+
 // ---- Side-Effecting Methods -----------------------------------------------
 
 /** Methods that mutate state and should carry an idempotency key. */
 export const SIDE_EFFECTING_METHODS: ReadonlySet<string> = new Set([
   'chat.send',
+  'chat.inject',
   'config.apply',
   'config.set',
+  'config.patch',
   'session.create',
   'session.cancel',
   'session.delete',
+  'sessions.patch',
+  'sessions.reset',
+  'sessions.delete',
+  'sessions.compact',
   'exec.approve',
   'exec.deny',
-  'cron.create',
+  'exec.approval.resolve',
+  'cron.add',
   'cron.update',
-  'cron.delete',
-  'cron.trigger',
-  'channel.create',
-  'channel.update',
-  'channel.delete',
-  'agent.create',
-  'agent.update',
-  'agent.delete',
-  'device.approve',
-  'device.revoke',
-  'skill.install',
-  'skill.uninstall',
+  'cron.remove',
+  'cron.run',
+  'agents.create',
+  'agents.update',
+  'agents.delete',
+  'agents.files.set',
+  'device.pair.approve',
+  'device.pair.reject',
+  'device.token.rotate',
+  'device.token.revoke',
+  'skills.install',
+  'skills.update',
   'model.set',
+  'node.invoke',
+  'node.pair.approve',
+  'node.pair.reject',
+  'node.rename',
+  'update.run',
+  'wizard.start',
+  'wizard.next',
+  'wizard.cancel',
+  'channels.logout',
+  'talk.mode',
 ]);

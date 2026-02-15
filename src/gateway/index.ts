@@ -12,7 +12,7 @@ export {
   buildDeviceIdentity,
   generateRequestId,
   generateIdempotencyKey,
-  getOrCreateDeviceFingerprint,
+  getOrCreateDeviceId,
   detectPlatform,
   isValidFrame,
 } from './protocol';
@@ -35,7 +35,20 @@ export type {
   ConnectAuth,
   ConnectDevice,
   HelloOkPayload,
+  HelloOkServer,
+  HelloOkFeatures,
+  HelloOkAuth,
   GatewayPolicy,
+  // Snapshot
+  Snapshot,
+  PresenceEntry,
+  SessionDefaults,
+  AuthMode,
+  // Chat events
+  ChatEventPayload,
+  // Tick / Shutdown events
+  TickEventPayload,
+  ShutdownEventPayload,
   // Event system
   EventHandler,
   Unsubscribe,
@@ -45,6 +58,9 @@ export type {
   // Config
   GatewayClientConfig,
   ReconnectState,
+  // Client ID / mode literals
+  GatewayClientId,
+  GatewayClientMode,
 } from './types';
 
 export { SIDE_EFFECTING_METHODS } from './types';

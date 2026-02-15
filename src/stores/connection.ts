@@ -8,20 +8,25 @@ import type {
   GatewayConnectionState,
   GatewayPolicy,
   StateVersion,
+  Snapshot,
+  HelloOkFeatures,
+  HelloOkAuth,
   EventHandler,
   EventFrame,
   Unsubscribe,
   RequestOptions,
 } from '@/gateway/types';
-import { buildClientInfo, buildDeviceIdentity } from '@/gateway/protocol';
+import { buildClientInfo } from '@/gateway/protocol';
 
 // ---- Store Types ----------------------------------------------------------
 
 interface ServerInfo {
   version: string | null;
-  serverId: string | null;
+  connId: string | null;
+  commit: string | null;
+  host: string | null;
   protocol: number;
-  features: string[];
+  features: HelloOkFeatures;
   policy: GatewayPolicy | null;
 }
 
@@ -29,7 +34,9 @@ interface ConnectionState {
   // -- Reactive state (drives UI)
   status: GatewayConnectionState;
   serverInfo: ServerInfo | null;
+  snapshot: Snapshot | null;
   stateVersion: StateVersion;
+  auth: HelloOkAuth | null;
   error: string | null;
   gatewayUrl: string;
   reconnectAttempt: number;
@@ -66,7 +73,9 @@ const NOOP_UNSUBSCRIBE: Unsubscribe = () => {
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
   status: 'disconnected',
   serverInfo: null,
+  snapshot: null,
   stateVersion: { presence: 0, health: 0 },
+  auth: null,
   error: null,
   gatewayUrl: DEFAULT_GATEWAY_URL,
   reconnectAttempt: 0,
@@ -87,14 +96,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ error: null, status: 'connecting' });
 
     const clientInfo = buildClientInfo();
-    // Device identity uses a placeholder nonce that will be replaced
-    // when the server challenge arrives
-    const device = buildDeviceIdentity('pending');
 
     const client = new GatewayClient({
       url: gatewayUrl,
       clientInfo,
-      device,
     });
 
     // Sync state changes into Zustand
@@ -109,14 +114,19 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       if (newState === 'connected') {
         update.error = null;
         update.reconnectAttempt = 0;
+        const si = client.serverInfo;
         update.serverInfo = {
-          version: client.serverVersion,
-          serverId: client.serverId,
+          version: si?.version ?? null,
+          connId: si?.connId ?? null,
+          commit: si?.commit ?? null,
+          host: si?.host ?? null,
           protocol: client.serverProtocol ?? 3,
-          features: client.serverFeatures,
+          features: client.serverFeatures ?? { methods: [], events: [] },
           policy: client.serverPolicy,
         };
+        update.snapshot = client.snapshot;
         update.stateVersion = client.stateVersion;
+        update.auth = client.auth;
       }
 
       if (newState === 'reconnecting') {
@@ -125,6 +135,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
       if (newState === 'disconnected') {
         update.serverInfo = null;
+        update.snapshot = null;
+        update.auth = null;
       }
 
       set(update);
@@ -151,6 +163,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({
       status: 'disconnected',
       serverInfo: null,
+      snapshot: null,
+      auth: null,
       error: null,
       reconnectAttempt: 0,
     });
@@ -165,6 +179,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       client: null,
       status: 'disconnected',
       serverInfo: null,
+      snapshot: null,
+      auth: null,
       error: null,
       reconnectAttempt: 0,
     });

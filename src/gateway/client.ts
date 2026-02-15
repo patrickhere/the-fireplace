@@ -10,6 +10,10 @@ import type {
   GatewayConnectionState,
   GatewayPolicy,
   StateVersion,
+  Snapshot,
+  HelloOkServer,
+  HelloOkFeatures,
+  HelloOkAuth,
   EventHandler,
   Unsubscribe,
   RequestOptions,
@@ -17,6 +21,7 @@ import type {
   GatewayClientConfig,
   ReconnectState,
   GatewayError,
+  ShutdownEventPayload,
 } from './types';
 import { SIDE_EFFECTING_METHODS } from './types';
 import {
@@ -94,14 +99,13 @@ export class GatewayClient {
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // -- Server info (populated after hello-ok)
+  private _serverInfo: HelloOkServer | null = null;
   private _serverPolicy: GatewayPolicy | null = null;
-  private _serverFeatures: string[] = [];
-  private _serverVersion: string | null = null;
-  private _serverId: string | null = null;
+  private _serverFeatures: HelloOkFeatures | null = null;
   private _serverProtocol: number | null = null;
-  private _authToken: string | null = null;
-  private _authExpiresAt: number | null = null;
-  private _snapshot: unknown = null;
+  private _snapshot: Snapshot | null = null;
+  private _canvasHostUrl: string | null = null;
+  private _auth: HelloOkAuth | null = null;
 
   // -- State version tracking
   private _stateVersion: StateVersion = { presence: 0, health: 0 };
@@ -128,6 +132,7 @@ export class GatewayClient {
   // -- Tick / watchdog
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private _lastTickSentAt = 0;
+  private _lastTickReceivedAt = 0;
 
   // -- Idempotency key tracking
   private idempotencyCache: IdempotencyCacheEntry[] = [];
@@ -158,35 +163,45 @@ export class GatewayClient {
     return this._serverPolicy;
   }
 
-  get serverFeatures(): string[] {
+  get serverFeatures(): HelloOkFeatures | null {
     return this._serverFeatures;
   }
 
+  /** Server identity from hello-ok: { version, commit, host, connId }. */
+  get serverInfo(): HelloOkServer | null {
+    return this._serverInfo;
+  }
+
   get serverVersion(): string | null {
-    return this._serverVersion;
+    return this._serverInfo?.version ?? null;
   }
 
   get serverId(): string | null {
-    return this._serverId;
+    return this._serverInfo?.connId ?? null;
   }
 
   get serverProtocol(): number | null {
     return this._serverProtocol;
   }
 
-  /** Auth token returned by the server during handshake, if any. */
+  /** Device auth token returned by the server during handshake, if any. */
   get authToken(): string | null {
-    return this._authToken;
+    return this._auth?.deviceToken ?? null;
   }
 
-  /** Auth token expiration timestamp (ms since epoch), if provided. */
-  get authExpiresAt(): number | null {
-    return this._authExpiresAt;
+  /** Full auth object from hello-ok: { deviceToken, role, scopes, issuedAtMs }. */
+  get auth(): HelloOkAuth | null {
+    return this._auth;
   }
 
-  /** Snapshot data received during the handshake, if any. */
-  get snapshot(): unknown {
+  /** Snapshot data received during the handshake. */
+  get snapshot(): Snapshot | null {
     return this._snapshot;
+  }
+
+  /** Canvas host URL from hello-ok, if provided. */
+  get canvasHostUrl(): string | null {
+    return this._canvasHostUrl;
   }
 
   get stateVersion(): StateVersion {
@@ -344,6 +359,8 @@ export class GatewayClient {
    *
    * For side-effecting methods (chat.send, config.apply, etc.), an idempotency
    * key is automatically generated if one is not provided in the options.
+   * The key is injected as `idempotencyKey` on the params object (matching the
+   * server schema where it is a top-level required field on the params).
    *
    * @param method - The RPC method name (e.g. "sessions.list")
    * @param params - Optional parameters for the method
@@ -370,15 +387,19 @@ export class GatewayClient {
       throw new Error(`Duplicate request: idempotency key "${idempotencyKey}" was already used`);
     }
 
-    const frame = buildRequestFrame(method, params);
-    const timeoutMs = options?.timeoutMs ?? this.config.defaultTimeoutMs;
-
-    // Inject idempotency key into params if present
-    if (idempotencyKey && typeof frame.params === 'object' && frame.params !== null) {
-      (frame.params as Record<string, unknown>)._idempotencyKey = idempotencyKey;
-    } else if (idempotencyKey && frame.params === undefined) {
-      frame.params = { _idempotencyKey: idempotencyKey };
+    // Inject idempotency key into params (server schemas expect it as
+    // a top-level field named `idempotencyKey` on the params object)
+    let finalParams = params;
+    if (idempotencyKey) {
+      if (typeof finalParams === 'object' && finalParams !== null) {
+        finalParams = { ...finalParams, idempotencyKey };
+      } else if (finalParams === undefined || finalParams === null) {
+        finalParams = { idempotencyKey };
+      }
     }
+
+    const frame = buildRequestFrame(method, finalParams);
+    const timeoutMs = options?.timeoutMs ?? this.config.defaultTimeoutMs;
 
     // Track the idempotency key
     if (idempotencyKey) {
@@ -564,6 +585,17 @@ export class GatewayClient {
       return;
     }
 
+    // Handle tick events for watchdog tracking
+    if (frame.event === 'tick') {
+      this._lastTickReceivedAt = Date.now();
+    }
+
+    // Handle shutdown events
+    if (frame.event === 'shutdown') {
+      this.handleShutdown(frame.payload as ShutdownEventPayload);
+      // Still emit to handlers below
+    }
+
     // Emit to specific handlers
     const handlers = this.eventHandlers.get(frame.event);
     if (handlers) {
@@ -607,7 +639,7 @@ export class GatewayClient {
       this.config.clientInfo,
       device,
       ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals'],
-      this._authToken ?? undefined
+      this._auth?.deviceToken
     );
 
     const connectFrame = buildRequestFrame('connect', connectParams);
@@ -652,19 +684,24 @@ export class GatewayClient {
 
     console.log(
       `[Gateway] Handshake complete: protocol=${payload.protocol} ` +
-        `features=[${payload.features.join(', ')}]`
+        `server=${payload.server.version} connId=${payload.server.connId} ` +
+        `methods=[${payload.features.methods.length}] events=[${payload.features.events.length}]`
     );
 
     // Store server info
+    this._serverInfo = payload.server;
     this._serverPolicy = payload.policy;
     this._serverFeatures = payload.features;
-    this._serverVersion = payload.version ?? null;
-    this._serverId = payload.serverId ?? null;
     this._serverProtocol = payload.protocol;
-    this._snapshot = payload.snapshot ?? null;
-    if (payload.auth?.token) {
-      this._authToken = payload.auth.token;
-      this._authExpiresAt = payload.auth.expiresAt ?? null;
+    this._snapshot = payload.snapshot;
+    this._canvasHostUrl = payload.canvasHostUrl ?? null;
+    if (payload.auth) {
+      this._auth = payload.auth;
+    }
+
+    // Initialize state version from snapshot
+    if (payload.snapshot?.stateVersion) {
+      this._stateVersion = { ...payload.snapshot.stateVersion };
     }
 
     // Reset reconnect state on successful connection
@@ -679,6 +716,26 @@ export class GatewayClient {
 
     // Resolve the connect() promise
     this.clearHandshake();
+  }
+
+  // ---- Internals: Shutdown ------------------------------------------------
+
+  /**
+   * Handle a shutdown event from the server. Logs the reason and prepares
+   * for a potential restart. If restartExpectedMs is provided, the
+   * reconnect delay is adjusted accordingly.
+   */
+  private handleShutdown(payload: ShutdownEventPayload): void {
+    console.log(
+      `[Gateway] Server shutting down: reason="${payload.reason}"` +
+        (payload.restartExpectedMs ? ` restartIn=${payload.restartExpectedMs}ms` : '')
+    );
+
+    // If the server tells us when it will restart, adjust the reconnect
+    // delay so we do not reconnect too early.
+    if (payload.restartExpectedMs && payload.restartExpectedMs > 0) {
+      this.reconnect.nextDelayMs = Math.max(this.reconnect.nextDelayMs, payload.restartExpectedMs);
+    }
   }
 
   // ---- Internals: Tick / Watchdog -----------------------------------------
@@ -721,6 +778,11 @@ export class GatewayClient {
   /** Timestamp (ms since epoch) of the last tick sent. */
   get lastTickSentAt(): number {
     return this._lastTickSentAt;
+  }
+
+  /** Timestamp (ms since epoch) of the last tick event received from server. */
+  get lastTickReceivedAt(): number {
+    return this._lastTickReceivedAt;
   }
 
   // ---- Internals: Send ----------------------------------------------------
