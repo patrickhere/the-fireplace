@@ -12,7 +12,6 @@ export {
   buildDeviceIdentity,
   generateRequestId,
   generateIdempotencyKey,
-  getOrCreateDeviceId,
   detectPlatform,
   isValidFrame,
 } from './protocol';

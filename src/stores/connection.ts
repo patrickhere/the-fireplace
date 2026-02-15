@@ -16,7 +16,7 @@ import type {
   Unsubscribe,
   RequestOptions,
 } from '@/gateway/types';
-import { buildClientInfo, getOrCreateDeviceId } from '@/gateway/protocol';
+import { buildClientInfo } from '@/gateway/protocol';
 import { deleteDeviceToken } from '@/lib/keychain';
 
 // ---- Store Types ----------------------------------------------------------
@@ -220,7 +220,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   clearDeviceToken: async () => {
     const { gatewayUrl } = get();
-    const deviceId = getOrCreateDeviceId();
+    const deviceId = localStorage.getItem('openclaw_device_id');
+
+    if (!deviceId) {
+      console.warn('[ConnectionStore] No device ID found, cannot clear token');
+      return;
+    }
 
     try {
       await deleteDeviceToken(deviceId, gatewayUrl);

@@ -638,7 +638,7 @@ export class GatewayClient {
     );
     this.setState('challenged');
 
-    // Build device identity using the challenge nonce (now async with real crypto)
+    // Build device identity using the challenge nonce (now async with Ed25519)
     const device = await buildDeviceIdentity(challenge.nonce);
     const deviceId = device.id;
 
