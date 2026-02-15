@@ -2,6 +2,7 @@
 // OpenClaw Gateway Protocol v3 -- Frame Builders & Helpers
 // ---------------------------------------------------------------------------
 
+import * as ed25519 from '@noble/ed25519';
 import type {
   RequestFrame,
   ConnectParams,
@@ -34,14 +35,7 @@ export function buildRequestFrame(method: string, params?: unknown, id?: string)
   };
 }
 
-/**
- * Build the `connect` request params for the v3 handshake.
- *
- * @param clientInfo - Client identity information
- * @param device - Device identity with cryptographic proof
- * @param scopes - Requested scopes (default: full operator permissions)
- * @param authToken - Optional device token from keychain for re-authentication
- */
+/** Build the `connect` request params for the v3 handshake. */
 export function buildConnectParams(
   clientInfo: ConnectClientInfo,
   device: ConnectDevice,
@@ -61,34 +55,40 @@ export function buildConnectParams(
   };
 }
 
-// ---- Device Identity Helpers ----------------------------------------------
+// ---- Device Identity Helpers (Ed25519) ------------------------------------
 
 /**
- * Generate or retrieve device keypair from localStorage.
- * Uses Ed25519 for signing (via SubtleCrypto).
+ * Convert Uint8Array to base64-url encoding (RFC 4648 §5).
+ * This matches OpenClaw's base64UrlEncode format.
  */
-async function getOrCreateKeypair(): Promise<{
+function base64UrlEncode(bytes: Uint8Array): string {
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+/**
+ * Generate or retrieve Ed25519 device keypair from localStorage.
+ * Matches OpenClaw's device identity format exactly.
+ */
+async function getOrCreateEd25519Keypair(): Promise<{
   deviceId: string;
   publicKey: string;
-  privateKey: CryptoKey;
+  privateKey: Uint8Array;
 }> {
   const DEVICE_ID_KEY = 'openclaw_device_id';
-  const PUBLIC_KEY_KEY = 'openclaw_public_key';
-  const PRIVATE_KEY_KEY = 'openclaw_private_key_jwk';
+  const PUBLIC_KEY_KEY = 'openclaw_public_key_ed25519';
+  const PRIVATE_KEY_KEY = 'openclaw_private_key_ed25519';
 
   // Check if we have existing keys
   const existingDeviceId = localStorage.getItem(DEVICE_ID_KEY);
   const existingPublicKey = localStorage.getItem(PUBLIC_KEY_KEY);
-  const existingPrivateKeyJwk = localStorage.getItem(PRIVATE_KEY_KEY);
+  const existingPrivateKey = localStorage.getItem(PRIVATE_KEY_KEY);
 
-  if (existingDeviceId && existingPublicKey && existingPrivateKeyJwk) {
+  if (existingDeviceId && existingPublicKey && existingPrivateKey) {
     try {
-      const privateKey = await crypto.subtle.importKey(
-        'jwk',
-        JSON.parse(existingPrivateKeyJwk),
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        true,
-        ['sign']
+      // Restore private key from hex
+      const privateKey = new Uint8Array(
+        existingPrivateKey.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))
       );
       return {
         deviceId: existingDeviceId,
@@ -96,60 +96,65 @@ async function getOrCreateKeypair(): Promise<{
         privateKey,
       };
     } catch (err) {
-      console.warn('[Protocol] Failed to import existing keypair, generating new one:', err);
+      console.warn(
+        '[Protocol] Failed to import existing Ed25519 keypair, generating new one:',
+        err
+      );
     }
   }
 
-  // Generate new keypair using ECDSA P-256 (widely supported)
-  const keypair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
-    'sign',
-    'verify',
-  ]);
+  // Generate new Ed25519 keypair
+  const privateKey = ed25519.utils.randomPrivateKey();
+  const publicKeyBytes = await ed25519.getPublicKeyAsync(privateKey);
 
-  // Export public key as base64
-  const publicKeyRaw = await crypto.subtle.exportKey('raw', keypair.publicKey);
-  const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)));
+  // Encode public key as base64-url (matching OpenClaw format)
+  const publicKey = base64UrlEncode(publicKeyBytes);
 
-  // Export private key as JWK for storage
-  const privateKeyJwk = await crypto.subtle.exportKey('jwk', keypair.privateKey);
-
-  // Generate device ID from public key hash
-  const publicKeyHash = await crypto.subtle.digest('SHA-256', publicKeyRaw);
+  // Derive device ID from SHA-256 hash of public key bytes (as hex)
+  const publicKeyHash = await crypto.subtle.digest('SHA-256', publicKeyBytes);
   const deviceId = Array.from(new Uint8Array(publicKeyHash))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
-  // Store in localStorage
+  // Store in localStorage (private key as hex for easy serialization)
   localStorage.setItem(DEVICE_ID_KEY, deviceId);
-  localStorage.setItem(PUBLIC_KEY_KEY, publicKeyBase64);
-  localStorage.setItem(PRIVATE_KEY_KEY, JSON.stringify(privateKeyJwk));
+  localStorage.setItem(PUBLIC_KEY_KEY, publicKey);
+  localStorage.setItem(
+    PRIVATE_KEY_KEY,
+    Array.from(privateKey)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  );
+
+  console.log('[Protocol] Generated new Ed25519 device identity:', {
+    deviceId,
+    publicKey: publicKey.slice(0, 20) + '...',
+  });
 
   return {
     deviceId,
-    publicKey: publicKeyBase64,
-    privateKey: keypair.privateKey,
+    publicKey,
+    privateKey,
   };
 }
 
 /**
- * Sign a nonce with the device private key.
+ * Sign a nonce with the Ed25519 private key.
+ * Returns base64-url encoded signature matching OpenClaw's format.
  */
-async function signNonce(nonce: string, privateKey: CryptoKey): Promise<string> {
+async function signNonceEd25519(nonce: string, privateKey: Uint8Array): Promise<string> {
   const nonceBytes = new TextEncoder().encode(nonce);
-  const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    privateKey,
-    nonceBytes
-  );
-  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+  const signature = await ed25519.signAsync(nonceBytes, privateKey);
+  return base64UrlEncode(signature);
 }
 
 /**
- * Build a ConnectDevice for the handshake with proper cryptographic signing.
+ * Build a ConnectDevice for the handshake with proper Ed25519 signing.
+ * Matches OpenClaw's exact device identity format and verification.
  */
 export async function buildDeviceIdentity(nonce: string): Promise<ConnectDevice> {
-  const { deviceId, publicKey, privateKey } = await getOrCreateKeypair();
-  const signature = await signNonce(nonce, privateKey);
+  const { deviceId, publicKey, privateKey } = await getOrCreateEd25519Keypair();
+  const signature = await signNonceEd25519(nonce, privateKey);
 
   return {
     id: deviceId,
