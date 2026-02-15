@@ -524,6 +524,7 @@ export function Chat() {
     activeSessionKey,
     loadHistory,
     subscribeToEvents,
+    unsubscribeFromEvents,
     error,
   } = useChatStore();
   const { status } = useConnectionStore();
@@ -545,7 +546,10 @@ export function Chat() {
     if (activeSessionKey && status === 'connected') {
       subscribeToEvents();
     }
-  }, [activeSessionKey, status, subscribeToEvents]);
+    return () => {
+      unsubscribeFromEvents();
+    };
+  }, [activeSessionKey, status, subscribeToEvents, unsubscribeFromEvents]);
 
   // Auto-scroll to bottom when new messages arrive (if already at bottom)
   useEffect(() => {

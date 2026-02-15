@@ -104,16 +104,19 @@ async function getOrCreateEd25519Keypair(): Promise<{
   }
 
   // Generate new Ed25519 keypair
-  const privateKey = ed25519.utils.randomPrivateKey();
-  const publicKeyBytes = await ed25519.getPublicKeyAsync(privateKey);
+  const privateKey = ed25519.utils.randomSecretKey();
+  const publicKeyBytes = await ed25519.getPublicKey(privateKey);
 
   // Encode public key as base64-url (matching OpenClaw format)
   const publicKey = base64UrlEncode(publicKeyBytes);
 
   // Derive device ID from SHA-256 hash of public key bytes (as hex)
-  const publicKeyHash = await crypto.subtle.digest('SHA-256', publicKeyBytes);
+  const publicKeyHash = await crypto.subtle.digest(
+    'SHA-256',
+    publicKeyBytes as unknown as BufferSource
+  );
   const deviceId = Array.from(new Uint8Array(publicKeyHash))
-    .map((b) => b.toString(16).padStart(2, '0'))
+    .map((b: number) => b.toString(16).padStart(2, '0'))
     .join('');
 
   // Store in localStorage (private key as hex for easy serialization)
@@ -122,7 +125,7 @@ async function getOrCreateEd25519Keypair(): Promise<{
   localStorage.setItem(
     PRIVATE_KEY_KEY,
     Array.from(privateKey)
-      .map((b) => b.toString(16).padStart(2, '0'))
+      .map((b: number) => b.toString(16).padStart(2, '0'))
       .join('')
   );
 

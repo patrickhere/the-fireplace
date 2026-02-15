@@ -30,7 +30,6 @@ import {
   buildDeviceIdentity,
   generateIdempotencyKey,
   isValidFrame,
-  getOrCreateDeviceId,
 } from './protocol';
 import { retrieveDeviceToken, storeDeviceToken } from '@/lib/keychain';
 
@@ -737,18 +736,22 @@ export class GatewayClient {
 
     // Persist device token to keychain if provided
     if (payload.auth?.deviceToken) {
-      const deviceId = getOrCreateDeviceId();
-      storeDeviceToken(
-        deviceId,
-        this.config.url,
-        payload.auth.deviceToken,
-        payload.auth.role,
-        payload.auth.scopes,
-        payload.auth.issuedAtMs ?? Date.now()
-      ).catch((err) => {
-        // Log keychain storage errors but do not fail the connection
-        console.warn('[Gateway] Failed to store device token in keychain:', err);
-      });
+      const deviceId = localStorage.getItem('openclaw_device_id');
+      if (deviceId) {
+        storeDeviceToken(
+          deviceId,
+          this.config.url,
+          payload.auth.deviceToken,
+          payload.auth.role,
+          payload.auth.scopes,
+          payload.auth.issuedAtMs ?? Date.now()
+        ).catch((err) => {
+          // Log keychain storage errors but do not fail the connection
+          console.warn('[Gateway] Failed to store device token in keychain:', err);
+        });
+      } else {
+        console.warn('[Gateway] Cannot store device token: device ID not found in localStorage');
+      }
     }
 
     // Reset reconnect state on successful connection
