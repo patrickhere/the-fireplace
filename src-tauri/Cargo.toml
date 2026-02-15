@@ -15,11 +15,14 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-os = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-updater = "2.10.0"
+tauri-plugin-store = "2.4.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

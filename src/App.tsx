@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
+import { CommandPalette } from '@/components/CommandPalette';
+import { GlobalShortcuts } from '@/components/GlobalShortcuts';
+import { UpdateBanner } from '@/components/UpdateBanner';
 
 // Views
 import { Chat } from '@/views/Chat';
@@ -23,34 +26,45 @@ function App() {
 
   return (
     <BrowserRouter>
-      <div className="flex h-screen overflow-hidden bg-zinc-950">
-        {/* Desktop: Sidebar */}
-        {!isMobile && <Sidebar />}
+      {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
+      <GlobalShortcuts />
 
-        {/* Main content area */}
-        <main
-          className="flex-1 overflow-auto pb-0 md:pb-0"
-          style={{ paddingBottom: isMobile ? '56px' : 0 }}
-        >
-          <Routes>
-            <Route path="/" element={<Chat />} />
-            <Route path="/sessions" element={<Sessions />} />
-            <Route path="/channels" element={<Channels />} />
-            <Route path="/agents" element={<Agents />} />
-            <Route path="/config" element={<Config />} />
-            <Route path="/approvals" element={<Approvals />} />
-            <Route path="/cron" element={<Cron />} />
-            <Route path="/skills" element={<Skills />} />
-            <Route path="/devices" element={<Devices />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/models" element={<Models />} />
-            <Route path="/usage" element={<Usage />} />
-            <Route path="/more" element={<More />} />
-          </Routes>
-        </main>
+      {/* Command palette overlay (Cmd+K) */}
+      <CommandPalette />
 
-        {/* Mobile: Bottom Navigation */}
-        {isMobile && <MobileNav />}
+      <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
+        {/* Update banner — macOS only, shows when update available */}
+        <UpdateBanner />
+
+        <div className="flex flex-1 overflow-hidden">
+          {/* Desktop: Sidebar */}
+          {!isMobile && <Sidebar />}
+
+          {/* Main content area */}
+          <main
+            className="flex-1 overflow-auto pb-0 md:pb-0"
+            style={{ paddingBottom: isMobile ? '56px' : 0 }}
+          >
+            <Routes>
+              <Route path="/" element={<Chat />} />
+              <Route path="/sessions" element={<Sessions />} />
+              <Route path="/channels" element={<Channels />} />
+              <Route path="/agents" element={<Agents />} />
+              <Route path="/config" element={<Config />} />
+              <Route path="/approvals" element={<Approvals />} />
+              <Route path="/cron" element={<Cron />} />
+              <Route path="/skills" element={<Skills />} />
+              <Route path="/devices" element={<Devices />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/models" element={<Models />} />
+              <Route path="/usage" element={<Usage />} />
+              <Route path="/more" element={<More />} />
+            </Routes>
+          </main>
+
+          {/* Mobile: Bottom Navigation */}
+          {isMobile && <MobileNav />}
+        </div>
       </div>
     </BrowserRouter>
   );

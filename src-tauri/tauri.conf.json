@@ -32,6 +32,10 @@
     }
   },
   "app": {
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": true
+    },
     "windows": [
       {
         "title": "The Fireplace",
@@ -54,6 +58,12 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/patrickhere/the-fireplace/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
     }
   }
 }
