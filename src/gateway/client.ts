@@ -638,9 +638,9 @@ export class GatewayClient {
     );
     this.setState('challenged');
 
-    // Build device identity using the challenge nonce
-    const device = buildDeviceIdentity(challenge.nonce);
-    const deviceId = getOrCreateDeviceId();
+    // Build device identity using the challenge nonce (now async with real crypto)
+    const device = await buildDeviceIdentity(challenge.nonce);
+    const deviceId = device.id;
 
     // Try to retrieve stored device token from keychain
     let authToken: string | undefined;

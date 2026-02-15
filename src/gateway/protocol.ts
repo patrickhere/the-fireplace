@@ -64,39 +64,97 @@ export function buildConnectParams(
 // ---- Device Identity Helpers ----------------------------------------------
 
 /**
- * Generate a persistent device ID (fingerprint).
- *
- * In production this should come from the Tauri keychain so it persists
- * across app restarts. For now we generate a deterministic placeholder
- * based on available browser/webview signals and cache it in localStorage.
+ * Generate or retrieve device keypair from localStorage.
+ * Uses Ed25519 for signing (via SubtleCrypto).
  */
-export function getOrCreateDeviceId(): string {
-  const STORAGE_KEY = 'openclaw_device_id';
-  const existing = localStorage.getItem(STORAGE_KEY);
-  if (existing) {
-    return existing;
+async function getOrCreateKeypair(): Promise<{
+  deviceId: string;
+  publicKey: string;
+  privateKey: CryptoKey;
+}> {
+  const DEVICE_ID_KEY = 'openclaw_device_id';
+  const PUBLIC_KEY_KEY = 'openclaw_public_key';
+  const PRIVATE_KEY_KEY = 'openclaw_private_key_jwk';
+
+  // Check if we have existing keys
+  const existingDeviceId = localStorage.getItem(DEVICE_ID_KEY);
+  const existingPublicKey = localStorage.getItem(PUBLIC_KEY_KEY);
+  const existingPrivateKeyJwk = localStorage.getItem(PRIVATE_KEY_KEY);
+
+  if (existingDeviceId && existingPublicKey && existingPrivateKeyJwk) {
+    try {
+      const privateKey = await crypto.subtle.importKey(
+        'jwk',
+        JSON.parse(existingPrivateKeyJwk),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign']
+      );
+      return {
+        deviceId: existingDeviceId,
+        publicKey: existingPublicKey,
+        privateKey,
+      };
+    } catch (err) {
+      console.warn('[Protocol] Failed to import existing keypair, generating new one:', err);
+    }
   }
-  const deviceId = `fp_${crypto.randomUUID()}`;
-  localStorage.setItem(STORAGE_KEY, deviceId);
-  return deviceId;
+
+  // Generate new keypair using ECDSA P-256 (widely supported)
+  const keypair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+
+  // Export public key as base64
+  const publicKeyRaw = await crypto.subtle.exportKey('raw', keypair.publicKey);
+  const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyRaw)));
+
+  // Export private key as JWK for storage
+  const privateKeyJwk = await crypto.subtle.exportKey('jwk', keypair.privateKey);
+
+  // Generate device ID from public key hash
+  const publicKeyHash = await crypto.subtle.digest('SHA-256', publicKeyRaw);
+  const deviceId = Array.from(new Uint8Array(publicKeyHash))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  // Store in localStorage
+  localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  localStorage.setItem(PUBLIC_KEY_KEY, publicKeyBase64);
+  localStorage.setItem(PRIVATE_KEY_KEY, JSON.stringify(privateKeyJwk));
+
+  return {
+    deviceId,
+    publicKey: publicKeyBase64,
+    privateKey: keypair.privateKey,
+  };
 }
 
 /**
- * Build a ConnectDevice for the handshake.
- *
- * Since we authenticate through Tailscale identity headers (no cryptographic
- * nonce signing is needed for Tailscale Serve connections), we provide
- * placeholder values for publicKey and signature. Local loopback connections
- * auto-approve device pairing.
- *
- * The device shape matches ConnectParamsSchema.device:
- *   { id, publicKey, signature, signedAt, nonce }
+ * Sign a nonce with the device private key.
  */
-export function buildDeviceIdentity(nonce: string): ConnectDevice {
+async function signNonce(nonce: string, privateKey: CryptoKey): Promise<string> {
+  const nonceBytes = new TextEncoder().encode(nonce);
+  const signature = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    privateKey,
+    nonceBytes
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+/**
+ * Build a ConnectDevice for the handshake with proper cryptographic signing.
+ */
+export async function buildDeviceIdentity(nonce: string): Promise<ConnectDevice> {
+  const { deviceId, publicKey, privateKey } = await getOrCreateKeypair();
+  const signature = await signNonce(nonce, privateKey);
+
   return {
-    id: getOrCreateDeviceId(),
-    publicKey: 'tailscale-identity',
-    signature: nonce, // Echo the nonce back; Tailscale headers handle auth
+    id: deviceId,
+    publicKey,
+    signature,
     signedAt: Date.now(),
     nonce,
   };
