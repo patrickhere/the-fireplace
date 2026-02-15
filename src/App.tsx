@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useIsMobile } from '@/hooks/usePlatform';
+import { useConnectionStore } from '@/stores/connection';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
 import { CommandPalette } from '@/components/CommandPalette';
@@ -23,6 +25,16 @@ import { More } from '@/views/More';
 
 function App() {
   const isMobile = useIsMobile();
+  const { connect, status } = useConnectionStore();
+
+  // Auto-connect on app startup
+  useEffect(() => {
+    if (status === 'disconnected') {
+      connect().catch((err) => {
+        console.error('[App] Auto-connect failed:', err);
+      });
+    }
+  }, []); // Only run once on mount
 
   return (
     <BrowserRouter>
