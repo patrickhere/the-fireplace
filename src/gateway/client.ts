@@ -28,6 +28,7 @@ import {
   buildRequestFrame,
   buildConnectParams,
   buildDeviceIdentity,
+  getDeviceId,
   generateIdempotencyKey,
   isValidFrame,
 } from './protocol';
@@ -637,9 +638,8 @@ export class GatewayClient {
     );
     this.setState('challenged');
 
-    // Build device identity using the challenge nonce (now async with Ed25519)
-    const device = await buildDeviceIdentity(challenge.nonce);
-    const deviceId = device.id;
+    // Get device ID first (needed to look up stored token)
+    const deviceId = await getDeviceId();
 
     // Try to retrieve stored device token from keychain
     let authToken: string | undefined;
@@ -652,12 +652,17 @@ export class GatewayClient {
       console.log('[Gateway] No stored device token found, proceeding with device pairing');
     }
 
-    const connectParams = buildConnectParams(
+    // Build device identity with all parameters (including token for signature)
+    const scopes = ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals'];
+    const device = await buildDeviceIdentity(
+      challenge.nonce,
       this.config.clientInfo,
-      device,
-      ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals'],
+      'operator',
+      scopes,
       authToken
     );
+
+    const connectParams = buildConnectParams(this.config.clientInfo, device, scopes, authToken);
 
     const connectFrame = buildRequestFrame('connect', connectParams);
 

@@ -10,6 +10,7 @@ export {
   buildConnectParams,
   buildClientInfo,
   buildDeviceIdentity,
+  getDeviceId,
   generateRequestId,
   generateIdempotencyKey,
   detectPlatform,

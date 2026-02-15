@@ -147,28 +147,94 @@ async function getOrCreateEd25519Keypair(): Promise<{
 }
 
 /**
- * Sign a nonce with the Ed25519 private key.
+ * Build the device authentication payload matching OpenClaw's format.
+ * The payload is a pipe-delimited string that gets signed.
+ */
+function buildDeviceAuthPayload(params: {
+  deviceId: string;
+  clientId: string;
+  clientMode: string;
+  role: string;
+  scopes: string[];
+  signedAtMs: number;
+  token: string | null;
+  nonce?: string;
+}): string {
+  const version = params.nonce ? 'v2' : 'v1';
+  const scopes = params.scopes.join(',');
+  const token = params.token ?? '';
+
+  const base = [
+    version,
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    scopes,
+    String(params.signedAtMs),
+    token,
+  ];
+
+  if (version === 'v2') {
+    base.push(params.nonce ?? '');
+  }
+
+  return base.join('|');
+}
+
+/**
+ * Sign the device auth payload with the Ed25519 private key.
  * Returns base64-url encoded signature matching OpenClaw's format.
  */
-async function signNonceEd25519(nonce: string, privateKey: Uint8Array): Promise<string> {
-  const nonceBytes = new TextEncoder().encode(nonce);
-  const signature = await ed25519.signAsync(nonceBytes, privateKey);
+async function signDevicePayload(payload: string, privateKey: Uint8Array): Promise<string> {
+  const payloadBytes = new TextEncoder().encode(payload);
+  const signature = await ed25519.signAsync(payloadBytes, privateKey);
   return base64UrlEncode(signature);
+}
+
+/**
+ * Get the device ID from the stored or newly generated keypair.
+ * This is useful for looking up stored tokens before building the full device identity.
+ */
+export async function getDeviceId(): Promise<string> {
+  const { deviceId } = await getOrCreateEd25519Keypair();
+  return deviceId;
 }
 
 /**
  * Build a ConnectDevice for the handshake with proper Ed25519 signing.
  * Matches OpenClaw's exact device identity format and verification.
  */
-export async function buildDeviceIdentity(nonce: string): Promise<ConnectDevice> {
+export async function buildDeviceIdentity(
+  nonce: string,
+  clientInfo: ConnectClientInfo,
+  role: string,
+  scopes: string[],
+  authToken?: string
+): Promise<ConnectDevice> {
   const { deviceId, publicKey, privateKey } = await getOrCreateEd25519Keypair();
-  const signature = await signNonceEd25519(nonce, privateKey);
+  const signedAt = Date.now();
+
+  // Build the complete payload that will be signed
+  const payload = buildDeviceAuthPayload({
+    deviceId,
+    clientId: clientInfo.id,
+    clientMode: clientInfo.mode,
+    role,
+    scopes,
+    signedAtMs: signedAt,
+    token: authToken ?? null,
+    nonce,
+  });
+
+  // Sign the full payload (not just the nonce!)
+  const signature = await signDevicePayload(payload, privateKey);
 
   return {
     id: deviceId,
     publicKey,
     signature,
-    signedAt: Date.now(),
+    signedAt,
     nonce,
   };
 }
