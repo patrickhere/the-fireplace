@@ -51,23 +51,19 @@ PROMPTS=(
 typeset -A PHASES
 PHASES=(
     1 "gateway ui"
-    2 "gateway chat"
-    3 "dashboards gateway"
-    4 "operations dashboards"
-    5 "operations gateway"
-    6 "operations"
-    7 "polish"
+    2 "chat"
+    3 "dashboards"
+    4 "operations"
+    5 "polish"
 )
 
 typeset -A PHASE_NAMES
 PHASE_NAMES=(
     1 "Skeleton — scaffold, gateway client, app shell"
     2 "Chat — streaming messages, markdown, attachments"
-    3 "Dashboards — sessions, channels, agents"
-    4 "Config & Agents — config editor, agent file management"
-    5 "Operations — approvals, cron, logs"
-    6 "Logs & Usage — log viewer, usage tracking"
-    7 "Polish — system tray, Cmd+K, notifications"
+    3 "Dashboards — sessions, channels, agents, models, usage"
+    4 "Operations — approvals, cron, config, skills, devices, logs"
+    5 "Polish — system tray, Cmd+K, notifications, shortcuts"
 )
 
 # ── Helper functions ──
@@ -276,7 +272,7 @@ if [[ "$1" == "--phase" ]]; then
     if [[ -z "${PHASES[$PHASE]}" ]]; then
         echo "${RED}Unknown phase: $PHASE${NC}"
         echo "Available phases:"
-        for P in {1..7}; do
+        for P in {1..5}; do
             echo "  ${BOLD}$P${NC}  ${PHASE_NAMES[$P]}"
         done
         exit 1
@@ -296,7 +292,7 @@ echo ""
 
 # Show phase presets
 echo "${BOLD}Phase presets:${NC}"
-for P in {1..7}; do
+for P in {1..5}; do
     echo "  ${DIM}--phase $P${NC}  ${PHASE_NAMES[$P]}  ${DIM}(${PHASES[$P]})${NC}"
 done
 echo ""
