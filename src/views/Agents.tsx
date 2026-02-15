@@ -10,7 +10,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
-import type { Agent, AgentFile } from '@/stores/agents';
+import type { Agent } from '@/stores/agents';
 
 // ---- Helper Functions -----------------------------------------------------
 
@@ -139,7 +139,6 @@ function CreateAgentModal() {
 function EditAgentModal({ agent }: { agent: Agent | null }) {
   const { showEditModal, setShowEditModal, updateAgent } = useAgentsStore();
   const [name, setName] = useState('');
-  const [workspace, setWorkspace] = useState('');
 
   useEffect(() => {
     if (agent) {
@@ -153,7 +152,6 @@ function EditAgentModal({ agent }: { agent: Agent | null }) {
     if (!name) return;
     await updateAgent(agent.id, { name, identity: agent.identity });
     setName('');
-    setWorkspace('');
   };
 
   return (

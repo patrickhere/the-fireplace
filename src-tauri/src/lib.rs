@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod tray;
+
 use tauri::Manager;
 
 #[tauri::command]
@@ -15,6 +17,10 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .invoke_handler(tauri::generate_handler![greet])
         .setup(|app| {
+            // Set up system tray (desktop only)
+            #[cfg(desktop)]
+            tray::setup_tray(&app.handle())?;
+
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();

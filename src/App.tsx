@@ -1,7 +1,10 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { useIsMobile } from '@/hooks/usePlatform';
+import { useKeyboard } from '@/hooks/useKeyboard';
 import { Sidebar } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
+import { CommandPalette } from '@/components/CommandPalette';
+import { usePaletteStore } from '@/stores/palette';
 
 // Views
 import { Chat } from '@/views/Chat';
@@ -18,11 +21,16 @@ import { Models } from '@/views/Models';
 import { Usage } from '@/views/Usage';
 import { More } from '@/views/More';
 
-function App() {
+function AppShell() {
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const togglePalette = usePaletteStore((s) => s.toggle);
+
+  useKeyboard(navigate, { onTogglePalette: togglePalette });
 
   return (
-    <BrowserRouter>
+    <>
+      <CommandPalette />
       <div className="flex h-screen overflow-hidden bg-zinc-950">
         {/* Desktop: Sidebar */}
         {!isMobile && <Sidebar />}
@@ -52,6 +60,14 @@ function App() {
         {/* Mobile: Bottom Navigation */}
         {isMobile && <MobileNav />}
       </div>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
     </BrowserRouter>
   );
 }
