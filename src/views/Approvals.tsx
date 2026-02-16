@@ -5,6 +5,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useApprovalsStore } from '@/stores/approvals';
 import { useConnectionStore } from '@/stores/connection';
+import { useAgentsStore } from '@/stores/agents';
 import type {
   ExecApprovalRequest,
   ExecApprovalsFile,
@@ -23,6 +24,69 @@ function formatTimeAgo(ms: number): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
+}
+
+// ---- CLI Backend Helpers --------------------------------------------------
+
+function isCliBackendCommand(command: string): boolean {
+  return command.startsWith('claude ') || command.startsWith('codex ');
+}
+
+function getBackendName(command: string): string {
+  if (command.startsWith('claude ')) return 'Claude Code';
+  if (command.startsWith('codex ')) return 'Codex';
+  return 'Unknown';
+}
+
+function formatElapsed(receivedAt: number): string {
+  const seconds = Math.floor((Date.now() - receivedAt) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+// ---- CLI Backend Card ----------------------------------------------------
+
+function CliBackendCard({
+  request,
+  agentName,
+  agentEmoji,
+}: {
+  request: ExecApprovalRequest;
+  agentName: string;
+  agentEmoji: string;
+}) {
+  const backendName = getBackendName(request.command);
+  const truncatedCommand =
+    request.command.length > 80 ? request.command.slice(0, 80) + '…' : request.command;
+  const [elapsed, setElapsed] = useState(() => formatElapsed(request.receivedAt));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(formatElapsed(request.receivedAt));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [request.receivedAt]);
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">{agentEmoji}</span>
+          <span className="text-sm font-medium text-zinc-200">{agentName}</span>
+          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-500">
+            {backendName}
+          </span>
+        </div>
+        <span className="text-xs text-zinc-500">{elapsed}</span>
+      </div>
+      <div className="rounded-md bg-zinc-900 p-2">
+        <code className="font-mono text-xs break-all text-zinc-300">{truncatedCommand}</code>
+      </div>
+    </div>
+  );
 }
 
 // ---- Pending Approval Card ------------------------------------------------
@@ -362,6 +426,7 @@ export function Approvals() {
   } = useApprovalsStore();
 
   const { status } = useConnectionStore();
+  const { agents } = useAgentsStore();
 
   const [localFile, setLocalFile] = useState<ExecApprovalsFile | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -453,6 +518,50 @@ export function Approvals() {
     setIsDirty(false);
   }, [localFile, snapshot?.hash, saveApprovals]);
 
+  // CLI backend requests: pending exec approvals where command starts with "claude " or "codex "
+  const cliBackendRequests = pendingRequests.filter(
+    (r) => r.command && isCliBackendCommand(r.command)
+  );
+
+  const handleQuickAllow = useCallback(
+    (pattern: string) => {
+      if (!localFile) return;
+      const agents = localFile.agents ?? {};
+      // Add pattern to all existing agents' allowlists, and create a __defaults__ agent
+      // if no agents exist yet, so the pattern applies globally
+      const agentId = '__defaults__';
+      const existing = agents[agentId] ?? {};
+      const allowlist = existing.allowlist ?? [];
+      const alreadyExists = allowlist.some((e) => e.pattern === pattern);
+      if (alreadyExists) return;
+      setLocalFile({
+        ...localFile,
+        agents: {
+          ...agents,
+          [agentId]: {
+            ...existing,
+            allowlist: [...allowlist, { pattern }],
+          },
+        },
+      });
+      setIsDirty(true);
+    },
+    [localFile]
+  );
+
+  const getAgentInfo = useCallback(
+    (agentId?: string) => {
+      if (!agentId) return { name: 'Unknown Agent', emoji: '🤖' };
+      const agent = agents.find((a) => a.id === agentId);
+      if (!agent) return { name: agentId, emoji: '🤖' };
+      return {
+        name: agent.identity?.name ?? agent.name ?? agentId,
+        emoji: agent.identity?.emoji ?? '🔥',
+      };
+    },
+    [agents]
+  );
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -504,6 +613,44 @@ export function Approvals() {
           <div className="text-sm text-zinc-400">Loading approvals...</div>
         ) : (
           <div className="space-y-6">
+            {/* CLI Backends Section */}
+            {cliBackendRequests.length > 0 && (
+              <section>
+                <h2 className="mb-3 text-sm font-semibold tracking-wider text-zinc-500 uppercase">
+                  CLI Backends
+                </h2>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {cliBackendRequests.map((req, index) => {
+                    const { name, emoji } = getAgentInfo(req.agentId);
+                    return (
+                      <CliBackendCard
+                        key={req.id ?? `cli-${index}`}
+                        request={req}
+                        agentName={name}
+                        agentEmoji={emoji}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => handleQuickAllow('claude --print *')}
+                    className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
+                    type="button"
+                  >
+                    Allow <code className="font-mono text-amber-400">claude --print *</code>
+                  </button>
+                  <button
+                    onClick={() => handleQuickAllow('codex --print *')}
+                    className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
+                    type="button"
+                  >
+                    Allow <code className="font-mono text-amber-400">codex --print *</code>
+                  </button>
+                </div>
+              </section>
+            )}
+
             {/* Pending Approvals Section */}
             <section>
               <h2 className="mb-3 text-sm font-semibold tracking-wider text-zinc-500 uppercase">
