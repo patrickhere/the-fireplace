@@ -484,51 +484,34 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
   models: {
     mode: "merge",  // Keep built-in providers (anthropic, openai, google)
     providers: {
-      "copilot": {
-        baseUrl: "http://127.0.0.1:4141",
-        apiKey: "dummy",
-        api: "anthropic-messages",
-        models: [
-          {
-            id: "claude-3.5-sonnet",
-            name: "Copilot Claude 3.5 Sonnet",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 200000,
-            maxTokens: 8192
-          }
-        ]
-      },
-      "copilot-openai": {
+      // FREE tier (0x multiplier, truly unlimited on Copilot Pro)
+      "copilot-free": {
         baseUrl: "http://127.0.0.1:4141/v1",
         apiKey: "dummy",
         api: "openai-completions",
         models: [
-          {
-            id: "gpt-4o",
-            name: "Copilot GPT-4o",
-            reasoning: false,
-            cost: { input: 0, output: 0 },
-            contextWindow: 128000,
-            maxTokens: 16384
-          },
-          {
-            id: "gpt-4o-mini",
-            name: "Copilot GPT-4o Mini",
-            reasoning: false,
-            cost: { input: 0, output: 0 },
-            contextWindow: 128000,
-            maxTokens: 16384
-          },
-          {
-            id: "o1-mini",
-            name: "Copilot o1-mini",
-            reasoning: true,
-            cost: { input: 0, output: 0 },
-            contextWindow: 128000,
-            maxTokens: 65536
-          }
+          { id: "gpt-4.1", name: "Copilot GPT-4.1 (Free)", cost: { input: 0, output: 0 }, contextWindow: 128000, maxTokens: 16384 },
+          { id: "gpt-5-mini", name: "Copilot GPT-5 Mini (Free)", cost: { input: 0, output: 0 }, contextWindow: 128000, maxTokens: 16384 },
+          { id: "gpt-4o", name: "Copilot GPT-4o (Free)", cost: { input: 0, output: 0 }, contextWindow: 128000, maxTokens: 16384 }
+        ]
+      },
+      // CHEAP tier (0.33x, ~900 calls/mo on 300 budget)
+      "copilot-cheap": {
+        baseUrl: "http://127.0.0.1:4141",
+        apiKey: "dummy",
+        api: "anthropic-messages",
+        models: [
+          { id: "claude-haiku-4.5", name: "Copilot Claude Haiku 4.5 (0.33x)", cost: { input: 0, output: 0 }, contextWindow: 200000, maxTokens: 16384 }
+        ]
+      },
+      // PREMIUM tier (1x-3x, use sparingly)
+      "copilot-premium": {
+        baseUrl: "http://127.0.0.1:4141",
+        apiKey: "dummy",
+        api: "anthropic-messages",
+        models: [
+          { id: "claude-sonnet-4.5", name: "Copilot Claude Sonnet 4.5 (1x)", cost: { input: 0, output: 0 }, contextWindow: 200000, maxTokens: 16384 },
+          { id: "claude-opus-4.6", name: "Copilot Claude Opus 4.6 (3x)", cost: { input: 0, output: 0 }, contextWindow: 200000, maxTokens: 16384 }
         ]
       }
     }
@@ -536,7 +519,7 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
 }
 ```
 
-**Note**: Gemini uses the built-in `google` provider — just needs `GEMINI_API_KEY` env var set.
+**Note**: Gemini uses the built-in `google` provider — just needs `GEMINI_API_KEY` env var set. Copilot proxy billing is determined server-side by model — only 0x models (GPT-4.1, GPT-5 mini, GPT-4o) are truly free.
 
 #### Configure Model Aliases
 
@@ -545,11 +528,12 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
   agents: {
     defaults: {
       models: {
-        // Copilot proxy models (free)
-        "copilot/claude-3.5-sonnet": { alias: "copilot-sonnet" },
-        "copilot-openai/gpt-4o": { alias: "copilot-gpt4o" },
-        "copilot-openai/gpt-4o-mini": { alias: "copilot-mini" },
-        "copilot-openai/o1-mini": { alias: "copilot-o1" },
+        // Copilot proxy — FREE (0x, unlimited)
+        "copilot-free/gpt-4.1": { alias: "gpt41" },
+        "copilot-free/gpt-5-mini": { alias: "gpt5mini" },
+        "copilot-free/gpt-4o": { alias: "gpt4o" },
+        // Copilot proxy — CHEAP (0.33x, ~900/mo)
+        "copilot-cheap/claude-haiku-4.5": { alias: "haiku" },
         // Gemini free tier
         "google/gemini-2.5-flash": { alias: "flash" },
         "google/gemini-2.5-flash-lite": { alias: "flash-lite" },
@@ -558,9 +542,9 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
         "anthropic/claude-sonnet-4-5": { alias: "sonnet" }
       },
       model: {
-        primary: "copilot/claude-3.5-sonnet",
+        primary: "copilot-free/gpt-4.1",
         fallbacks: [
-          "copilot-openai/gpt-4o",
+          "copilot-free/gpt-5-mini",
           "google/gemini-2.5-flash",
           "anthropic/claude-sonnet-4-5"
         ]
@@ -569,7 +553,7 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
         model: "google/gemini-2.5-flash-lite"
       },
       subagents: {
-        model: "copilot-openai/gpt-4o-mini"
+        model: "copilot-free/gpt-5-mini"
       }
     }
   }
@@ -591,17 +575,17 @@ openclaw models status --probe          # Test connectivity to all endpoints
 
 #### Demon Definitions
 
-| Demon | ID | Model | Role |
-|-------|----|-------|------|
-| **Calcifer** 🔥 | `calcifer` | `copilot/claude-opus-4.6` (free via proxy!) | Primary orchestrator, critical decisions |
-| **Buer** 📐 | `buer` | `copilot/claude-sonnet-4.5` (free) | Architect: code audit, optimization |
-| **Paimon** 📚 | `paimon` | `copilot-openai/gemini-2.5-pro` (free) | Knowledge: research, documentation |
-| **Alloces** ♟️ | `alloces` | `copilot-openai/gpt-5` (free) | Strategy: resource allocation, planning |
-| **Dantalion** 🧠 | `dantalion` | `copilot-openai/gpt-5-mini` (free) | Intent: NLU, context inference |
-| **Andromalius** 🛡️ | `andromalius` | `copilot/claude-opus-4.6` (free) | Security: threat monitoring, access control |
-| **Malphas** 🏗️ | `malphas` | `copilot-openai/gpt-5.1` (free) | Builder: code generation, scaffolding |
+| Demon | ID | Primary Model | Cost Tier | Role |
+|-------|----|---------------|-----------|------|
+| **Calcifer** 🔥 | `calcifer` | `anthropic/claude-sonnet-4-5` | MAX sub | Primary orchestrator, critical decisions |
+| **Buer** 📐 | `buer` | `copilot-free/gpt-4.1` | FREE (0x) | Architect: code audit, optimization |
+| **Paimon** 📚 | `paimon` | `google/gemini-2.5-flash` | FREE (Gemini) | Knowledge: research, documentation |
+| **Alloces** ♟️ | `alloces` | `copilot-free/gpt-4.1` | FREE (0x) | Strategy: resource allocation, planning |
+| **Dantalion** 🧠 | `dantalion` | `copilot-free/gpt-5-mini` | FREE (0x) | Intent: NLU, context inference |
+| **Andromalius** 🛡️ | `andromalius` | `copilot-free/gpt-4.1` | FREE (0x) | Security: threat monitoring, access control |
+| **Malphas** 🏗️ | `malphas` | `copilot-free/gpt-4.1` | FREE (0x) | Builder: code generation, scaffolding |
 
-> **Note**: The Copilot proxy provides access to frontier models (Claude Opus 4.6, GPT-5.x, Gemini 2.5 Pro, Gemini 3 Flash) at $0 marginal cost. **ALL 7 demons now run on free-tier models.** Direct Anthropic/Google APIs are kept only as last-resort fallbacks.
+> **IMPORTANT — Copilot Proxy Billing Reality**: The proxy does NOT make all models free. GitHub bills premium requests server-side based on the MODEL requested, not the endpoint. Only models with 0x multiplier (GPT-4.1, GPT-5 mini, GPT-4o) are truly unlimited. Claude models cost 1-3x premium requests each (Opus = 3x = ~100 calls/mo on Pro's 300 budget). **Strategy**: All demons default to FREE 0x models. Heavy coding work is offloaded to CLI backends (Claude Code / Codex) which are covered by existing subscriptions. Claude MAX API is fallback-only for Calcifer/Andromalius critical tasks.
 
 #### Create via OpenClaw CLI
 
@@ -632,36 +616,41 @@ Alternative: Create via Fireplace Agents view (has full CRUD UI).
 #### Per-Demon Model Assignment (in OpenClaw config)
 
 ```json5
+// Copilot proxy billing tiers:
+//   FREE (0x, unlimited): GPT-4.1, GPT-5 mini, GPT-4o
+//   CHEAP (0.33x, ~900/mo): Claude Haiku 4.5, Gemini 3 Flash
+//   STANDARD (1x, 300/mo): Claude Sonnet 4.5, GPT-5, GPT-5.1
+//   EXPENSIVE (3x, ~100/mo): Claude Opus 4.5/4.6
 {
   agents: {
     list: [
       {
         id: "calcifer",
-        model: { primary: "anthropic/claude-opus-4-6", fallbacks: ["anthropic/claude-sonnet-4-5", "copilot/claude-3.5-sonnet"] }
+        model: { primary: "anthropic/claude-sonnet-4-5", fallbacks: ["anthropic/claude-opus-4-6", "copilot-free/gpt-4.1"] }
       },
       {
         id: "buer",
-        model: { primary: "copilot/claude-3.5-sonnet", fallbacks: ["copilot-openai/gpt-4o", "google/gemini-2.5-flash"] }
+        model: { primary: "copilot-free/gpt-4.1", fallbacks: ["copilot-free/gpt-5-mini", "google/gemini-2.5-flash"] }
       },
       {
         id: "paimon",
-        model: { primary: "google/gemini-2.5-flash", fallbacks: ["google/gemini-2.5-flash-lite", "copilot-openai/gpt-4o-mini"] }
+        model: { primary: "google/gemini-2.5-flash", fallbacks: ["copilot-free/gpt-4.1", "copilot-free/gpt-5-mini"] }
       },
       {
         id: "alloces",
-        model: { primary: "copilot-openai/gpt-4o", fallbacks: ["copilot/claude-3.5-sonnet", "google/gemini-2.5-flash"] }
+        model: { primary: "copilot-free/gpt-4.1", fallbacks: ["copilot-free/gpt-5-mini", "google/gemini-2.5-flash"] }
       },
       {
         id: "dantalion",
-        model: { primary: "copilot-openai/gpt-4o-mini", fallbacks: ["google/gemini-2.5-flash-lite"] }
+        model: { primary: "copilot-free/gpt-5-mini", fallbacks: ["copilot-free/gpt-4.1", "google/gemini-2.5-flash"] }
       },
       {
         id: "andromalius",
-        model: { primary: "anthropic/claude-sonnet-4-5", fallbacks: ["copilot/claude-3.5-sonnet"] }
+        model: { primary: "copilot-free/gpt-4.1", fallbacks: ["anthropic/claude-sonnet-4-5", "copilot-free/gpt-5-mini"] }
       },
       {
         id: "malphas",
-        model: { primary: "copilot/claude-3.5-sonnet", fallbacks: ["copilot-openai/gpt-4o"] }
+        model: { primary: "copilot-free/gpt-4.1", fallbacks: ["copilot-free/gpt-5-mini", "google/gemini-2.5-flash"] }
       }
     ]
   }
@@ -929,31 +918,32 @@ Add to exec approvals allowlist (via Fireplace Approvals view):
 
 ```json5
 {
+  defaults: {
+    security: "high",
+    autoAllowSkills: false,
+    ask: "always",
+    askFallback: "deny"
+  },
   agents: {
-    // Allow all demons to use Claude Code and Codex
-    "*": {
-      allowlist: [
-        { pattern: "claude *", security: "low" },
-        { pattern: "codex *", security: "low" }
-      ]
-    }
-  }
-}
-```
-
-Or per-demon if you want tighter control:
-```json5
-{
-  agents: {
+    // NEVER use broad "claude *" or "codex *" wildcards — they allow arbitrary execution.
+    // Use narrow read-only patterns only:
     "malphas": {
+      security: "high",
       allowlist: [
-        { pattern: "claude *", security: "low" },
-        { pattern: "codex *", security: "low" }
+        { pattern: "claude --print *" },
+        { pattern: "claude -p *" },
+        { pattern: "codex --print *" },
+        { pattern: "codex -q *" },
+        { pattern: "pnpm format *" },
+        { pattern: "pnpm lint *" }
       ]
     },
     "buer": {
+      security: "high",
       allowlist: [
-        { pattern: "claude *", security: "low" }
+        { pattern: "claude --print *" },
+        { pattern: "npm audit *" },
+        { pattern: "npx tsc --noEmit *" }
       ]
     }
   }
@@ -1274,18 +1264,18 @@ The current 7 demons cover the core roles, but you may want to spin up ad-hoc sp
 
 #### Built-in Templates
 
-| Template | Description | Default Model |
-|----------|-------------|---------------|
-| **Orchestrator** | Delegates tasks, coordinates workflows | `anthropic/claude-opus-4-6` |
-| **Code Architect** | Reviews, audits, optimizes code | `copilot/claude-3.5-sonnet` |
-| **Researcher** | Deep research, documentation, knowledge synthesis | `google/gemini-2.5-flash` |
-| **Strategist** | Planning, resource allocation, decision analysis | `copilot-openai/gpt-4o` |
-| **Builder** | Code generation, scaffolding, implementation | `copilot/claude-3.5-sonnet` |
-| **Security Analyst** | Threat monitoring, access control, vulnerability scanning | `anthropic/claude-sonnet-4-5` |
-| **Data Engineer** | Data pipelines, ETL, database management | `copilot-openai/gpt-4o` |
-| **DevOps** | Infrastructure, CI/CD, deployment automation | `copilot/claude-3.5-sonnet` |
-| **QA / Tester** | Test writing, test execution, bug reproduction | `copilot-openai/gpt-4o-mini` |
-| **Blank** | Empty soul file, define from scratch | (default) |
+| Template | Description | Default Model | Tier |
+|----------|-------------|---------------|------|
+| **Orchestrator** | Delegates tasks, coordinates workflows | `anthropic/claude-sonnet-4-5` | MAX |
+| **Code Architect** | Reviews, audits, optimizes code | `copilot-free/gpt-4.1` | Free |
+| **Researcher** | Deep research, documentation, knowledge synthesis | `google/gemini-2.5-flash` | Free |
+| **Strategist** | Planning, resource allocation, decision analysis | `copilot-free/gpt-4.1` | Free |
+| **Builder** | Code generation, scaffolding, implementation | `copilot-free/gpt-4.1` | Free |
+| **Security Analyst** | Threat monitoring, access control, vulnerability scanning | `copilot-free/gpt-4.1` | Free |
+| **Data Engineer** | Data pipelines, ETL, database management | `copilot-free/gpt-4.1` | Free |
+| **DevOps** | Infrastructure, CI/CD, deployment automation | `copilot-free/gpt-4.1` | Free |
+| **QA / Tester** | Test writing, test execution, bug reproduction | `copilot-free/gpt-5-mini` | Free |
+| **Blank** | Empty soul file, define from scratch | (default) | Free |
 
 Each template includes:
 - Pre-written soul file with role description, communication style, delegation rules
@@ -1449,16 +1439,27 @@ Phase 12 (Integration — depends on all above)
 
 ### Cost Analysis
 
-| Service | Monthly Cost | Purpose |
-|---------|-------------|---------|
-| Claude MAX | $100 | Calcifer + Andromalius (API) + Claude Code CLI backend |
-| ChatGPT Plus | $20 | Codex CLI backend + backup API |
-| GitHub Copilot Individual | $10 | Buer, Alloces, Malphas, Dantalion (free API routing) |
-| Gemini API | $0 | Free tier — Paimon (research), heartbeats |
+| Service | Monthly Cost | What It Provides |
+|---------|-------------|------------------|
+| Claude MAX | $100 | Claude Code CLI backend + Opus/Sonnet API fallback for critical tasks |
+| ChatGPT Plus | $20 | Codex CLI backend + backup |
+| GitHub Copilot Pro | $10 | GPT-4.1 + GPT-5 mini + GPT-4o (0x unlimited) + 300 premium req/mo budget |
+| Gemini API | $0 | Free tier — Paimon primary, heartbeats |
 | **Total** | **$130/mo** | Down from ~$1,750+/mo on direct API |
 
-**ALL 7 demons run at $0 marginal API cost** — the Copilot proxy provides Claude Opus 4.6, GPT-5.x, Gemini 2.5 Pro, and more for free. Direct API subs are fallback-only.
-**All 7 demons** can spawn Claude Code or Codex for coding tasks — covered by existing MAX + Plus subs.
+#### How It Actually Works
+
+| Layer | Model | Cost | Used For |
+|-------|-------|------|----------|
+| **Demon thinking** (planning, routing, analysis) | GPT-4.1 / GPT-5 mini via Copilot proxy | $0 (0x unlimited) | 5 demons (Buer, Alloces, Dantalion, Andromalius, Malphas) |
+| **Orchestration** | Claude Sonnet 4.5 (MAX sub) | Covered by $100/mo | Calcifer only (primary orchestrator) |
+| **Research & docs** | Gemini 2.5 Flash (free tier) | $0 (Gemini free) | Paimon, heartbeats, bulk processing |
+| **Heavy coding** | Claude Code CLI (MAX sub) | Covered by $100/mo | Multi-file refactors, deep analysis, security audits |
+| **Rapid generation** | Codex CLI (Plus sub) | Covered by $20/mo | Scaffolding, prototyping, boilerplate |
+| **Critical decisions** | Claude Opus API (MAX sub) | Covered by $100/mo | Calcifer/Andromalius escalation only |
+| **Premium proxy models** | Claude Sonnet/Haiku via proxy | 300 req/mo budget | Emergency fallback, NOT routine use |
+
+**Key insight**: Demons do their *thinking* on free models, but *execute* heavy work through CLI backends (Claude Code / Codex) which are covered by existing subscriptions. The Copilot proxy's premium models (Claude, GPT-5) are avoided for routine use — they eat into the 300/mo budget.
 
 ---
 
