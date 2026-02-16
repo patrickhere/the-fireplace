@@ -394,18 +394,15 @@ ok "OpenClaw config updated at $OC_CONFIG"
 # =============================================================================
 banner "Create Demon Agents"
 
-declare -A DEMONS=(
-  ["calcifer"]="Calcifer|🔥"
-  ["buer"]="Buer|📐"
-  ["paimon"]="Paimon|📚"
-  ["alloces"]="Alloces|♟️"
-  ["dantalion"]="Dantalion|🧠"
-  ["andromalius"]="Andromalius|🛡️"
-  ["malphas"]="Malphas|🏗️"
-)
+DEMON_LIST="calcifer|Calcifer|🔥
+buer|Buer|📐
+paimon|Paimon|📚
+alloces|Alloces|♟️
+dantalion|Dantalion|🧠
+andromalius|Andromalius|🛡️
+malphas|Malphas|🏗️"
 
-for id in calcifer buer paimon alloces dantalion andromalius malphas; do
-  IFS='|' read -r name emoji <<< "${DEMONS[$id]}"
+echo "$DEMON_LIST" | while IFS='|' read -r id name emoji; do
   workspace="$HOME/.openclaw/agents/$id"
 
   if openclaw agents list 2>/dev/null | grep -q "\"$id\""; then
