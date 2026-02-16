@@ -106,10 +106,29 @@ COMPOSE
 
 ok "Wrote $INFRA_DIR/docker-compose.yml"
 
+# Configure docker-compose as CLI plugin (brew installs it standalone)
+mkdir -p "$HOME/.docker/cli-plugins" 2>/dev/null
+if [ -f "/opt/homebrew/lib/docker/cli-plugins/docker-compose" ]; then
+  ln -sf /opt/homebrew/lib/docker/cli-plugins/docker-compose "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null
+elif command -v docker-compose &>/dev/null; then
+  ln -sf "$(which docker-compose)" "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null
+fi
+
+# Detect which compose command works
+if docker compose version &>/dev/null 2>&1; then
+  DC="docker compose"
+elif command -v docker-compose &>/dev/null; then
+  DC="docker-compose"
+else
+  fail "Neither 'docker compose' nor 'docker-compose' found"
+  exit 1
+fi
+ok "Using: $DC"
+
 # Pull and start
 echo "  Pulling copilot-proxy image..."
-docker compose -f "$INFRA_DIR/docker-compose.yml" pull
-docker compose -f "$INFRA_DIR/docker-compose.yml" up -d
+$DC -f "$INFRA_DIR/docker-compose.yml" pull
+$DC -f "$INFRA_DIR/docker-compose.yml" up -d
 ok "Copilot proxy container started"
 
 # Wait for it to boot
@@ -120,7 +139,7 @@ sleep 5
 echo ""
 echo "  Checking logs for GitHub auth URL..."
 echo ""
-docker compose -f "$INFRA_DIR/docker-compose.yml" logs --tail=30 copilot-proxy
+$DC -f "$INFRA_DIR/docker-compose.yml" logs --tail=30 copilot-proxy
 echo ""
 
 pause_for_user "Open the GitHub auth URL shown above in your browser and authenticate.
