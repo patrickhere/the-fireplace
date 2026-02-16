@@ -7,6 +7,11 @@ import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Agent Types ----------------------------------------------------------
 
+export interface AgentModel {
+  primary: string;
+  fallbacks: string[];
+}
+
 export interface Agent {
   id: string;
   name?: string;
@@ -17,6 +22,7 @@ export interface Agent {
     avatar?: string;
     avatarUrl?: string;
   };
+  model?: AgentModel;
 }
 
 export interface AgentFile {
@@ -108,8 +114,26 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
       const response = await request<AgentsListResult>('agents.list', {});
 
+      const agents = (response.agents || []).map((agent) => {
+        // Parse model field from gateway response — may be raw object
+        const raw = agent as Agent & { model?: unknown };
+        let model: AgentModel | undefined;
+        if (raw.model && typeof raw.model === 'object') {
+          const m = raw.model as unknown as Record<string, unknown>;
+          if (typeof m.primary === 'string') {
+            model = {
+              primary: m.primary,
+              fallbacks: Array.isArray(m.fallbacks)
+                ? (m.fallbacks as unknown[]).filter((f): f is string => typeof f === 'string')
+                : [],
+            };
+          }
+        }
+        return { ...agent, model };
+      });
+
       set({
-        agents: response.agents || [],
+        agents,
         isLoading: false,
       });
     } catch (err) {
