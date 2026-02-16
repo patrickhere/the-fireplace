@@ -100,6 +100,7 @@ interface ChatState {
 
   // -- Event subscription
   eventUnsubscribe: Unsubscribe | null;
+  _streamWatchdog: ReturnType<typeof setTimeout> | null;
 
   // -- Actions
   setActiveSession: (sessionKey: string) => void;
@@ -166,6 +167,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   error: null,
   eventUnsubscribe: null,
+  _streamWatchdog: null,
 
   setActiveSession: (sessionKey: string) => {
     const { activeSessionKey, unsubscribeFromEvents, subscribeToEvents } = get();
@@ -267,10 +269,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
 
       // Mark as streaming (assistant response will arrive via events)
+      const prevWatchdog = get()._streamWatchdog;
+      if (prevWatchdog) clearTimeout(prevWatchdog);
+      const streamWatchdog = setTimeout(() => {
+        const { isStreaming } = get();
+        if (!isStreaming) return;
+        set({
+          error: 'No response events received from gateway (backend likely failed).',
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+          _streamWatchdog: null,
+        });
+      }, 30_000);
+
       set({
         isStreaming: true,
         streamingMessageId: null,
         streamingBuffer: '',
+        _streamWatchdog: streamWatchdog,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
@@ -292,10 +309,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sessionKey: activeSessionKey,
         idempotencyKey: crypto.randomUUID(),
       });
+      const watchdog = get()._streamWatchdog;
+      if (watchdog) clearTimeout(watchdog);
       set({
         isStreaming: false,
         streamingMessageId: null,
         streamingBuffer: '',
+        _streamWatchdog: null,
       });
     } catch (err) {
       console.error('[Chat] Failed to abort stream:', err);
@@ -409,6 +429,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Ignore events from other sessions
         if (payload.sessionKey !== currentSession) return;
 
+        // Any event for this session means stream is alive — refresh watchdog.
+        const watchdog = get()._streamWatchdog;
+        if (watchdog) {
+          clearTimeout(watchdog);
+          const nextWatchdog = setTimeout(() => {
+            const { isStreaming } = get();
+            if (!isStreaming) return;
+            set({
+              error: 'Stream stalled waiting for gateway events.',
+              isStreaming: false,
+              streamingMessageId: null,
+              streamingBuffer: '',
+              _streamWatchdog: null,
+            });
+          }, 30_000);
+          set({ _streamWatchdog: nextWatchdog });
+        }
+
         // Track sequence numbers (if present)
         if (payload.seq > lastSeq) {
           set({ lastSeq: payload.seq });
@@ -416,32 +454,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         // Handle error shape used by current store schema
         if (payload.error) {
+          const activeWatchdog = get()._streamWatchdog;
+          if (activeWatchdog) clearTimeout(activeWatchdog);
           set({
             error: payload.error.message,
             isStreaming: false,
             streamingMessageId: null,
             streamingBuffer: '',
+            _streamWatchdog: null,
           });
           return;
         }
 
         // Handle alternate gateway schema: { state: 'error', errorMessage }
         if (payload.state === 'error' || payload.errorMessage) {
+          const activeWatchdog = get()._streamWatchdog;
+          if (activeWatchdog) clearTimeout(activeWatchdog);
           set({
             error: payload.errorMessage || 'Chat request failed',
             isStreaming: false,
             streamingMessageId: null,
             streamingBuffer: '',
+            _streamWatchdog: null,
           });
           return;
         }
 
         // Handle alternate gateway schema: { state: 'final' | 'aborted' }
         if (payload.state === 'final' || payload.state === 'aborted') {
+          const activeWatchdog = get()._streamWatchdog;
+          if (activeWatchdog) clearTimeout(activeWatchdog);
           set({
             isStreaming: false,
             streamingMessageId: null,
             streamingBuffer: '',
+            _streamWatchdog: null,
           });
           return;
         }
@@ -509,10 +556,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         // Handle completion
         if (payload.done) {
+          const activeWatchdog = get()._streamWatchdog;
+          if (activeWatchdog) clearTimeout(activeWatchdog);
           set({
             isStreaming: false,
             streamingMessageId: null,
             streamingBuffer: '',
+            _streamWatchdog: null,
           });
         }
       });
@@ -523,10 +573,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   unsubscribeFromEvents: () => {
     const { eventUnsubscribe } = get();
+    const watchdog = get()._streamWatchdog;
+    if (watchdog) clearTimeout(watchdog);
     if (eventUnsubscribe) {
       eventUnsubscribe();
-      set({ eventUnsubscribe: null });
+      set({ eventUnsubscribe: null, _streamWatchdog: null });
+      return;
     }
+    set({ _streamWatchdog: null });
   },
 
   reset: () => {
@@ -547,6 +601,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
       error: null,
       eventUnsubscribe: null,
+      _streamWatchdog: null,
     });
   },
 }));
