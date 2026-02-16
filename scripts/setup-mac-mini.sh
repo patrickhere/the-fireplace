@@ -263,6 +263,12 @@ config.setdefault("models", {})
 config["models"]["mode"] = "merge"
 config["models"].setdefault("providers", {})
 
+# Clean up legacy provider names from previous runs
+for legacy in ["copilot", "copilot-openai"]:
+    if legacy in config["models"]["providers"]:
+        del config["models"]["providers"][legacy]
+        print(f"  Removed legacy provider: {legacy}")
+
 # === Copilot Proxy Model Tiers ===
 # FREE (0x multiplier, truly unlimited on Copilot Pro $10/mo):
 #   GPT-4.1, GPT-5 mini, GPT-4o, Raptor mini
