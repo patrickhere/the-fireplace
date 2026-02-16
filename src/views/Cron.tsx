@@ -756,10 +756,13 @@ export function Cron() {
     try {
       const parsed = JSON.parse(entry.output) as { entries?: VerifiedCronRunEntry[] };
       const rows = parsed.entries ?? [];
+      const deterministicRows = rows.filter((row) => row.summary === 'verified.health.pulse');
+      const hiddenCount = rows.length - deterministicRows.length;
       return (
         <div className="space-y-2">
           <div className="text-xs text-zinc-400">
-            Showing verified metadata only. `summary` is untrusted model output.
+            Showing deterministic pulse runs only (`summary: verified.health.pulse`).
+            {hiddenCount > 0 ? ` Hidden pre-cutover rows: ${hiddenCount}.` : ''}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -773,7 +776,7 @@ export function Cron() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, idx) => (
+                {deterministicRows.map((row, idx) => (
                   <tr
                     key={`${row.sessionId ?? row.runAtMs ?? row.ts ?? idx}`}
                     className="border-b border-zinc-800"
