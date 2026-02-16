@@ -440,6 +440,9 @@ ok "OpenClaw config updated at $OC_CONFIG"
 # =============================================================================
 banner "Create Demon Agents"
 
+# OpenClaw CLI uses two-step process:
+#   1. `openclaw agents add <id> --workspace <path>` — create the agent
+#   2. `openclaw agents set-identity --agent <id> --name "<name>" --emoji "<emoji>"` — set identity
 DEMON_LIST="calcifer|Calcifer|🔥
 buer|Buer|📐
 paimon|Paimon|📚
@@ -450,16 +453,27 @@ malphas|Malphas|🏗️"
 
 echo "$DEMON_LIST" | while IFS='|' read -r id name emoji; do
   workspace="$HOME/.openclaw/agents/$id"
+  mkdir -p "$workspace"
 
-  if openclaw agents list 2>/dev/null | grep -q "\"$id\""; then
+  if openclaw agents list 2>/dev/null | grep -q "$id"; then
     ok "$emoji $name already exists"
   else
     echo "  Creating $emoji $name..."
-    mkdir -p "$workspace"
-    if openclaw agents create --id "$id" --name "$name" --emoji "$emoji" --workspace "$workspace" 2>/dev/null; then
-      ok "Created $emoji $name"
+
+    # Step 1: Add the agent with workspace
+    if openclaw agents add "$id" --workspace "$workspace" 2>&1; then
+      ok "Added agent $id"
     else
-      warn "Could not create $name via CLI — create manually in Fireplace Agents view"
+      warn "Could not add $name — trying alternative syntax..."
+      # Fallback: try without --workspace flag (some versions use positional args)
+      openclaw agents add "$id" "$workspace" 2>&1 || true
+    fi
+
+    # Step 2: Set identity (name + emoji)
+    if openclaw agents set-identity --agent "$id" --name "$name" --emoji "$emoji" 2>&1; then
+      ok "Set identity for $emoji $name"
+    else
+      warn "Could not set identity for $name — set manually in Fireplace Agents view"
     fi
   fi
 done

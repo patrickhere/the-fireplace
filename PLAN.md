@@ -605,15 +605,29 @@ openclaw models status --probe          # Test connectivity to all endpoints
 
 #### Create via OpenClaw CLI
 
+OpenClaw CLI uses a two-step process: `agents add` to create, then `agents set-identity` to name:
+
 ```bash
-openclaw agents create --id calcifer --name "Calcifer" --emoji "🔥" --workspace ~/.openclaw/agents/calcifer
-openclaw agents create --id buer --name "Buer" --emoji "📐" --workspace ~/.openclaw/agents/buer
-openclaw agents create --id paimon --name "Paimon" --emoji "📚" --workspace ~/.openclaw/agents/paimon
-openclaw agents create --id alloces --name "Alloces" --emoji "♟️" --workspace ~/.openclaw/agents/alloces
-openclaw agents create --id dantalion --name "Dantalion" --emoji "🧠" --workspace ~/.openclaw/agents/dantalion
-openclaw agents create --id andromalius --name "Andromalius" --emoji "🛡️" --workspace ~/.openclaw/agents/andromalius
-openclaw agents create --id malphas --name "Malphas" --emoji "🏗️" --workspace ~/.openclaw/agents/malphas
+# Step 1: Add each agent with workspace
+openclaw agents add calcifer --workspace ~/.openclaw/agents/calcifer
+openclaw agents add buer --workspace ~/.openclaw/agents/buer
+openclaw agents add paimon --workspace ~/.openclaw/agents/paimon
+openclaw agents add alloces --workspace ~/.openclaw/agents/alloces
+openclaw agents add dantalion --workspace ~/.openclaw/agents/dantalion
+openclaw agents add andromalius --workspace ~/.openclaw/agents/andromalius
+openclaw agents add malphas --workspace ~/.openclaw/agents/malphas
+
+# Step 2: Set identity for each
+openclaw agents set-identity --agent calcifer --name "Calcifer" --emoji "🔥"
+openclaw agents set-identity --agent buer --name "Buer" --emoji "📐"
+openclaw agents set-identity --agent paimon --name "Paimon" --emoji "📚"
+openclaw agents set-identity --agent alloces --name "Alloces" --emoji "♟️"
+openclaw agents set-identity --agent dantalion --name "Dantalion" --emoji "🧠"
+openclaw agents set-identity --agent andromalius --name "Andromalius" --emoji "🛡️"
+openclaw agents set-identity --agent malphas --name "Malphas" --emoji "🏗️"
 ```
+
+Alternative: Create via Fireplace Agents view (has full CRUD UI).
 
 #### Per-Demon Model Assignment (in OpenClaw config)
 
