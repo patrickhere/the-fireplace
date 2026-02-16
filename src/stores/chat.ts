@@ -104,6 +104,7 @@ interface ChatState {
   abortStream: () => Promise<void>;
   injectNote: (text: string) => Promise<void>;
   addAttachment: (attachment: Attachment) => void;
+  addMultipleAttachments: (files: File[]) => void;
   removeAttachment: (attachmentId: string) => void;
   clearAttachments: () => void;
   updateSessionConfig: (config: Partial<SessionConfig>) => void;
@@ -314,6 +315,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       attachments: [...state.attachments, { ...attachment, id: generateAttachmentId() }],
     }));
+  },
+
+  addMultipleAttachments: (files: File[]) => {
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        const data = base64.split(',')[1] || base64;
+        const attachment: Attachment = {
+          id: generateAttachmentId(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data,
+          url: base64,
+        };
+        set((state) => ({
+          attachments: [...state.attachments, attachment],
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
   },
 
   removeAttachment: (attachmentId: string) => {
