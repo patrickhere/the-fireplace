@@ -23,6 +23,19 @@ interface VerifiedCheckEntry {
   isError?: boolean;
 }
 
+interface VerifiedCronRunEntry {
+  ts?: number;
+  jobId?: string;
+  action?: string;
+  status?: string;
+  runAtMs?: number;
+  durationMs?: number;
+  sessionId?: string;
+  sessionKey?: string;
+  error?: string;
+  summary?: string;
+}
+
 // ---- Quick-Create Templates -----------------------------------------------
 
 interface CronTemplate {
@@ -735,6 +748,67 @@ export function Cron() {
   const [isRunningVerifiedCheck, setIsRunningVerifiedCheck] = useState(false);
   const [verifiedCheckEntries, setVerifiedCheckEntries] = useState<VerifiedCheckEntry[]>([]);
 
+  const renderVerifiedOutput = useCallback((entry: VerifiedCheckEntry) => {
+    if (!entry.command.includes('cron.runs')) {
+      return <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">{entry.output}</pre>;
+    }
+
+    try {
+      const parsed = JSON.parse(entry.output) as { entries?: VerifiedCronRunEntry[] };
+      const rows = parsed.entries ?? [];
+      return (
+        <div className="space-y-2">
+          <div className="text-xs text-zinc-400">
+            Showing verified metadata only. `summary` is untrusted model output.
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-zinc-700 text-left text-zinc-500">
+                  <th className="pr-2 pb-1 font-medium">Run At</th>
+                  <th className="pr-2 pb-1 font-medium">Status</th>
+                  <th className="pr-2 pb-1 font-medium">Duration</th>
+                  <th className="pr-2 pb-1 font-medium">Session</th>
+                  <th className="pb-1 font-medium">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, idx) => (
+                  <tr
+                    key={`${row.sessionId ?? row.runAtMs ?? row.ts ?? idx}`}
+                    className="border-b border-zinc-800"
+                  >
+                    <td className="py-1 pr-2 text-zinc-300">
+                      {new Date(row.runAtMs ?? row.ts ?? Date.now()).toLocaleString()}
+                    </td>
+                    <td className="py-1 pr-2 text-zinc-300">{row.status ?? '--'}</td>
+                    <td className="py-1 pr-2 text-zinc-300">
+                      {typeof row.durationMs === 'number' ? `${row.durationMs}ms` : '--'}
+                    </td>
+                    <td className="py-1 pr-2 font-mono text-zinc-400">
+                      {(row.sessionId ?? '--').slice(0, 8)}
+                    </td>
+                    <td className="py-1 text-red-400">{row.error ?? '--'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300">
+              Show raw JSON
+            </summary>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">
+              {entry.output}
+            </pre>
+          </details>
+        </div>
+      );
+    } catch {
+      return <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">{entry.output}</pre>;
+    }
+  }, []);
+
   // Load on mount
   useEffect(() => {
     if (status === 'connected') {
@@ -925,9 +999,7 @@ export function Cron() {
                   }`}
                 >
                   <div className="mb-1 text-xs text-zinc-400">{entry.command}</div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">
-                    {entry.output}
-                  </pre>
+                  {renderVerifiedOutput(entry)}
                 </div>
               ))}
             </div>
