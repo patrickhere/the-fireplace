@@ -480,8 +480,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
 
-        // Handle alternate gateway schema: { state: 'final' | 'aborted' }
-        if (payload.state === 'final' || payload.state === 'aborted') {
+        // Handle alternate gateway schema: final may carry the completed message
+        if (payload.state === 'final') {
+          const finalText = extractTextFromEventMessage(payload.message);
+          if (finalText) {
+            const messageId = streamingMessageId || payload.messageId || generateMessageId();
+            set((state) => {
+              const existingIndex = state.messages.findIndex((m) => m.id === messageId);
+              const updatedMessage: Message = {
+                id: messageId,
+                role: 'assistant',
+                content: [{ type: 'text', text: finalText }],
+                timestamp: Date.now(),
+              };
+
+              if (existingIndex >= 0) {
+                const messages = [...state.messages];
+                messages[existingIndex] = updatedMessage;
+                return { messages };
+              }
+
+              return { messages: [...state.messages, updatedMessage] };
+            });
+          }
+
+          const activeWatchdog = get()._streamWatchdog;
+          if (activeWatchdog) clearTimeout(activeWatchdog);
+          set({
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
+            _streamWatchdog: null,
+          });
+          return;
+        }
+
+        // Handle alternate gateway schema: aborted
+        if (payload.state === 'aborted') {
           const activeWatchdog = get()._streamWatchdog;
           if (activeWatchdog) clearTimeout(activeWatchdog);
           set({
