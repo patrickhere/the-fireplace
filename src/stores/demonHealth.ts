@@ -275,9 +275,12 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
           (a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0)
         )[0];
         const activeModel = latestSession?.model ?? demon.activeModel;
+        const state =
+          demon.state === 'offline' && activeSessions > 0 ? ('idle' as const) : demon.state;
 
         return {
           ...demon,
+          state,
           activeSessions,
           lastActivity,
           activeModel,
