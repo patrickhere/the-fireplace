@@ -52,10 +52,39 @@ function generateId(): string {
   return `dcm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function extractTextFromEventMessage(message: unknown): string {
+  if (typeof message === 'string') return message;
+  if (Array.isArray(message)) {
+    const parts = message
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'text' in item) {
+          const text = (item as { text?: unknown }).text;
+          return typeof text === 'string' ? text : '';
+        }
+        return '';
+      })
+      .filter(Boolean);
+    return parts.join('\n');
+  }
+  if (message && typeof message === 'object' && 'text' in message) {
+    const text = (message as { text?: unknown }).text;
+    return typeof text === 'string' ? text : '';
+  }
+  return '';
+}
+
 /** Match an agent from a sessionKey (which is often prefixed with agentId). */
 function matchAgentFromSessionKey(sessionKey: string, agents: Agent[]): Agent | undefined {
-  // Direct prefix match on agent id
-  let match = agents.find((a) => sessionKey.startsWith(a.id));
+  // Canonical format: "agent:<agentId>:..."
+  const canonicalMatch = sessionKey.match(/^agent:([^:]+):/);
+  if (canonicalMatch?.[1]) {
+    const byCanonicalId = agents.find((a) => a.id === canonicalMatch[1]);
+    if (byCanonicalId) return byCanonicalId;
+  }
+
+  // Generic token match
+  let match = agents.find((a) => sessionKey.includes(`:${a.id}:`) || sessionKey.startsWith(a.id));
   if (match) return match;
 
   // Fallback: check if any agent name appears in session key
@@ -134,15 +163,37 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
         const activeAnonKeys = new Map<string, string>(); // sessionKey → bufferKey
 
         const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
-          // ChatEventPayload has: sessionKey, messageId, delta, seq, done, error
-          // It does NOT have role/content/agentId — we infer agent from sessionKey
-          if (!payload.delta && !payload.done && !payload.error) return;
+          // ChatEventPayload may be either:
+          // - delta/done/error shape
+          // - state/message/errorMessage shape
+          if (
+            !payload.delta &&
+            !payload.done &&
+            !payload.error &&
+            !payload.state &&
+            !payload.errorMessage
+          )
+            return;
 
           const agents = useAgentsStore.getState().agents;
           const sessionKey = payload.sessionKey;
 
           const matchedAgent = matchAgentFromSessionKey(sessionKey, agents);
           if (!matchedAgent) return;
+
+          // Handle alternate gateway schema: { state: 'error', errorMessage }
+          if (payload.state === 'error' || payload.errorMessage) {
+            if (payload.messageId) {
+              streamBuffers.delete(payload.messageId);
+            } else {
+              const anonKey = activeAnonKeys.get(sessionKey);
+              if (anonKey) {
+                streamBuffers.delete(anonKey);
+                activeAnonKeys.delete(sessionKey);
+              }
+            }
+            return;
+          }
 
           // Clear buffer on error to prevent stale data contaminating later streams
           if (payload.error) {
@@ -155,6 +206,55 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
                 activeAnonKeys.delete(sessionKey);
               }
             }
+            return;
+          }
+
+          // Handle alternate gateway schema delta stream
+          if (payload.state === 'delta') {
+            const deltaText = extractTextFromEventMessage(payload.message);
+            if (deltaText) {
+              const key = payload.messageId ?? `${sessionKey}:state`;
+              const prev = streamBuffers.get(key) ?? '';
+              streamBuffers.set(key, prev + deltaText);
+            }
+            return;
+          }
+
+          // Handle alternate gateway schema final event
+          if (payload.state === 'final') {
+            const key = payload.messageId ?? `${sessionKey}:state`;
+            const finalText = extractTextFromEventMessage(payload.message);
+            const content = finalText || streamBuffers.get(key) || '';
+            streamBuffers.delete(key);
+            if (!content) return;
+
+            const msgId = payload.messageId ?? generateId();
+            const demonId = matchedAgent.id;
+            const demonName = matchedAgent.identity?.name ?? matchedAgent.id;
+            const demonEmoji = matchedAgent.identity?.emoji ?? '';
+            const { isDelegation, targetDemonId } = detectDelegation(content, agents);
+
+            const msg: DemonChatMessage = {
+              id: msgId,
+              demonId,
+              demonName,
+              demonEmoji,
+              sessionKey,
+              role: 'assistant',
+              content,
+              model: '',
+              timestamp: Date.now(),
+              isDelegation,
+              targetDemonId,
+            };
+
+            set((state) => {
+              const newMessages = [...state.messages, msg];
+              if (newMessages.length > MAX_MESSAGES) {
+                return { messages: newMessages.slice(newMessages.length - MAX_MESSAGES) };
+              }
+              return { messages: newMessages };
+            });
             return;
           }
 
