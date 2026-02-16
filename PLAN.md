@@ -320,7 +320,9 @@ the-fireplace/
 
 ---
 
-## Phase 8: Mission Control — Demon Agent Architecture & Cost-Optimized Model Routing
+## Phases 8–12: Mission Control — Demon Agent Architecture & Cost-Optimized Model Routing
+
+> **Parallelization note**: These phases are structured so multiple agents can work on them concurrently. Each sub-phase lists its dependencies explicitly. Phases 8A/8B/8C are infrastructure (Mac Mini). Phases 9–12 are Fireplace code and can be parallelized across agents — see dependency graph below.
 
 ### Context
 
@@ -348,7 +350,11 @@ With all original phases complete, The Fireplace now has:
 
 ---
 
-### 8.1 Infrastructure — Proxy Setup on Mac Mini
+### Phase 8: Infrastructure & Configuration (Mac Mini — no Fireplace code)
+
+> **Can be done manually or scripted. No dependencies on other phases.**
+
+#### 8A. Proxy Setup on Mac Mini
 
 **What**: Deploy GitHub Copilot API proxy and configure Gemini free tier on the Mac Mini (where OpenClaw gateway runs).
 
@@ -465,7 +471,7 @@ Choose based on the task. You may use either for any task — these are preferen
 
 ---
 
-### 8.2 OpenClaw Configuration — Multi-Provider Model Routing
+#### 8B. OpenClaw Configuration — Multi-Provider Model Routing
 
 **What**: Configure OpenClaw's `~/.openclaw/openclaw.json` with multiple providers and per-demon model assignments.
 
@@ -579,7 +585,7 @@ openclaw models status --probe          # Test connectivity to all endpoints
 
 ---
 
-### 8.3 Create Demon Agents in OpenClaw
+#### 8C. Create Demon Agents in OpenClaw
 
 **What**: Create all 7 demon agents via OpenClaw CLI or via Fireplace's existing Agents view.
 
@@ -674,7 +680,10 @@ You are Calcifer, the primary orchestration demon for Mission Control.
 
 ---
 
-### 8.4 Fireplace UI Enhancements
+### Phase 9: Enhance Existing Views (Fireplace code)
+
+> **Dependencies**: None — works with existing gateway data. Can start before Phase 8 is done.
+> **Parallelizable**: Each view (A–F) can be worked on by a separate agent simultaneously.
 
 **What**: Enhance existing views for demon visibility, model routing, and proxy health.
 
@@ -749,7 +758,7 @@ You are Calcifer, the primary orchestration demon for Mission Control.
 
 ---
 
-### 8.5 Demon Task Scheduling via Cron
+#### G. Demon Task Scheduling via Cron (enhancement to existing Cron view)
 
 Use the existing Cron system — no new infrastructure.
 
@@ -764,7 +773,7 @@ Each uses `payload.kind: 'agentTurn'` with the demon's `agentId`.
 
 ---
 
-### 8.6 Document Processing via Chat
+#### H. Document Processing via Chat (enhancement to existing Chat view)
 
 Uses existing chat attachment system — no new infrastructure for basic flow.
 
@@ -777,7 +786,12 @@ Enhanced with bulk upload mode (Step 8.4F above).
 
 ---
 
-### 8.7 Demon Chat Room — Inter-Demon Communication View
+### Phase 10: New Demon Views (Fireplace code)
+
+> **Dependencies**: Requires `src/stores/agents.ts` model field from Phase 9A. Otherwise independent.
+> **Parallelizable**: Each view (Chat Room, Health, Kanban) can be built by a separate agent simultaneously.
+
+#### 10A. Demon Chat Room — Inter-Demon Communication View
 
 **What**: A new view where you can watch demons talk to each other as they work. Like a mission control chat room showing all inter-demon delegation, coordination, and status updates in real time.
 
@@ -878,7 +892,7 @@ interface DemonChatStore {
 
 ---
 
-### 8.8 CLI Execution Backend Integration
+#### 10B. CLI Execution Backend Integration (Approvals view enhancement)
 
 **What**: Configure OpenClaw to allow demons to spawn Claude Code and Codex CLI processes for coding tasks.
 
@@ -942,24 +956,450 @@ Enhance Approvals view to show CLI backend usage:
 
 ---
 
+#### 10C. Demon Health Dashboard
+
+**What**: A real-time grid showing each demon's operational status — like a process monitor for the swarm.
+
+#### Design
+
+- **New view**: `src/views/DemonHealth.tsx` — accessible from sidebar/nav
+- **7-card grid**: One card per demon, responsive (2-col mobile, 4-col desktop)
+- Each card shows:
+  - Demon emoji + name
+  - **Status**: Idle / Working / Error / Offline (with color-coded dot: zinc/amber/red/zinc-800)
+  - **Current task**: What the demon is working on right now (from active session's last user message)
+  - **Model in use**: Which model is currently active (primary or fallback)
+  - **Uptime**: Time since last restart/error
+  - **Session count**: Active sessions for this demon
+  - **Last activity**: Relative timestamp ("2m ago")
+  - **CLI backend**: If running Claude Code or Codex, show which + elapsed time
+
+#### Data Sources
+
+- Demon status derived from session activity (active chat events = working, no events in 5m = idle)
+- Current task from latest `chat.send` message in the demon's active session
+- Model from session config or latest response metadata
+- CLI backend status from exec approval events (running process = active)
+
+#### Store
+
+**New file**: `src/stores/demonHealth.ts`
+
+```typescript
+interface DemonStatus {
+  demonId: string;
+  state: 'idle' | 'working' | 'error' | 'offline';
+  currentTask: string | null;
+  activeModel: string;
+  activeSessions: number;
+  lastActivity: number;        // timestamp
+  uptime: number;              // ms since last error/restart
+  cliBackend: {
+    active: boolean;
+    tool: 'claude-code' | 'codex' | null;
+    startedAt: number | null;
+  };
+}
+
+interface DemonHealthStore {
+  demons: DemonStatus[];
+  isPolling: boolean;
+
+  // Actions
+  startMonitoring: () => void;   // subscribe to session + exec events
+  stopMonitoring: () => void;
+  refreshAll: () => void;
+}
+```
+
+#### View Layout
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Demon Health                          [Refresh All] │
+│  5 active · 1 idle · 1 working                       │
+├────────────────────────┬─────────────────────────────┤
+│  🔥 Calcifer           │  📐 Buer                    │
+│  ● Working             │  ● Working                  │
+│  "Coordinate auth      │  "Auditing gateway/         │
+│   refactor across 3    │   client.ts for memory      │
+│   demons"              │   leaks"                    │
+│  opus · 2 sessions     │  copilot-sonnet · 1 session │
+│  12m ago               │  Claude Code running (3m)   │
+├────────────────────────┼─────────────────────────────┤
+│  📚 Paimon             │  ♟️ Alloces                  │
+│  ● Idle                │  ● Working                  │
+│  —                     │  "Planning Q2 resource      │
+│                        │   allocation"               │
+│  flash · 0 sessions    │  copilot-gpt4o · 1 session  │
+│  45m ago               │  5m ago                     │
+├────────────────────────┼─────────────────────────────┤
+│  🧠 Dantalion          │  🛡️ Andromalius             │
+│  ● Idle                │  ● Working                  │
+│  —                     │  "Nightly security scan     │
+│                        │   in progress"              │
+│  copilot-mini · 0      │  sonnet-4-5 · 1 session     │
+│  2h ago                │  1m ago                     │
+├────────────────────────┼─────────────────────────────┤
+│  🏗️ Malphas             │                             │
+│  ● Working             │                             │
+│  "Generating test      │                             │
+│   suite for auth mod"  │                             │
+│  copilot-sonnet · 1    │                             │
+│  Codex running (1m)    │                             │
+└────────────────────────┴─────────────────────────────┘
+```
+
+#### Files
+
+- **New**: `src/stores/demonHealth.ts` — Health monitoring store
+- **New**: `src/views/DemonHealth.tsx` — Health dashboard view
+- **Modify**: `src/App.tsx` — Add route `/demon-health`
+- **Modify**: `src/components/Sidebar.tsx` — Add nav item
+- **Modify**: `src/components/MobileNav.tsx` — Add nav item (or under More)
+
+---
+
+#### 10D. Task Queue / Kanban — Demon Work Pipeline
+
+**What**: A visual pipeline showing tasks flowing through demons — from delegation to completion.
+
+#### Concept
+
+When Calcifer delegates work, it creates a task. That task moves through stages: **Queued** → **In Progress** → **Done** (or **Failed**). The Kanban view shows this as columns so you can see the flow of work across all demons at a glance.
+
+#### Design
+
+- **New view**: `src/views/DemonKanban.tsx` — accessible from sidebar/nav
+- **3 columns**: Queued | In Progress | Done (with Failed as a sub-state of Done)
+- **Task cards** show:
+  - Task description (from delegation message)
+  - Assigned demon (emoji + name)
+  - Delegated by (which demon or operator)
+  - Model being used
+  - Time in current stage
+  - CLI backend if active (Claude Code / Codex)
+- **Drag-and-drop**: Manually re-prioritize queued tasks (optional, nice-to-have)
+- **Filters**: By demon, by delegator, by age
+- **Auto-archive**: Done tasks fade after 1h, move to history after 24h
+
+#### Data Model
+
+Tasks are derived from inter-demon delegation patterns in chat sessions:
+1. When a demon sends a message to another demon's session → "Queued" task
+2. When the target demon starts responding → "In Progress"
+3. When the target demon's response completes → "Done"
+4. If error event fires → "Failed"
+
+**New file**: `src/stores/demonTasks.ts`
+
+```typescript
+interface DemonTask {
+  id: string;
+  description: string;
+  status: 'queued' | 'in_progress' | 'done' | 'failed';
+  assignedTo: string;           // demonId
+  delegatedBy: string;          // demonId or 'operator'
+  sessionKey: string;
+  model: string;
+  cliBackend: 'claude-code' | 'codex' | null;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
+}
+
+interface DemonTaskStore {
+  tasks: DemonTask[];
+  archivedTasks: DemonTask[];
+  filterDemon: string | null;
+
+  // Actions
+  startTracking: () => void;    // subscribe to delegation events
+  stopTracking: () => void;
+  setFilter: (demonId: string | null) => void;
+  archiveCompleted: () => void;
+}
+```
+
+#### View Layout
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Task Pipeline                    [Filter: All Demons ▾]     │
+│  3 queued · 2 in progress · 8 done today                     │
+├──────────────────┬───────────────────┬───────────────────────┤
+│  QUEUED (3)      │  IN PROGRESS (2)  │  DONE (8)             │
+├──────────────────┼───────────────────┼───────────────────────┤
+│ ┌──────────────┐ │ ┌───────────────┐ │ ┌───────────────────┐ │
+│ │ Review PR #42 │ │ │ Auth refactor │ │ │ ✓ Security scan   │ │
+│ │ → 📐 Buer    │ │ │ → 🏗️ Malphas  │ │ │   🛡️ Andromalius  │ │
+│ │ by 🔥Calcifer│ │ │ by 🔥Calcifer │ │ │   12m · sonnet-4-5│ │
+│ │ 2m waiting   │ │ │ Codex (5m)    │ │ └───────────────────┘ │
+│ └──────────────┘ │ │ copilot-sonnet│ │ ┌───────────────────┐ │
+│ ┌──────────────┐ │ └───────────────┘ │ │ ✓ Context cleanup  │ │
+│ │ Update docs  │ │ ┌───────────────┐ │ │   ♟️ Alloces       │ │
+│ │ → 📚 Paimon  │ │ │ Audit gateway │ │ │   8m · copilot-4o │ │
+│ │ by 🔥Calcifer│ │ │ → 📐 Buer     │ │ └───────────────────┘ │
+│ │ 30s waiting  │ │ │ Claude Code   │ │ ┌───────────────────┐ │
+│ └──────────────┘ │ │ (3m)          │ │ │ ✗ Parse intent     │ │
+│ ┌──────────────┐ │ │ copilot-sonnet│ │ │   🧠 Dantalion     │ │
+│ │ Plan sprint  │ │ └───────────────┘ │ │   Failed: timeout  │ │
+│ │ → ♟️ Alloces  │ │                   │ └───────────────────┘ │
+│ │ by operator  │ │                   │        ...            │
+│ │ just now     │ │                   │                       │
+│ └──────────────┘ │                   │                       │
+└──────────────────┴───────────────────┴───────────────────────┘
+```
+
+#### Files
+
+- **New**: `src/stores/demonTasks.ts` — Task tracking store
+- **New**: `src/views/DemonKanban.tsx` — Kanban view
+- **Modify**: `src/App.tsx` — Add route `/demon-tasks`
+- **Modify**: `src/components/Sidebar.tsx` — Add nav item
+- **Modify**: `src/components/MobileNav.tsx` — Add nav item (or under More)
+
+---
+
+### Phase 11: Session Replay & Templates (Fireplace code)
+
+> **Dependencies**: Replay depends on Demon Chat Room (10A) and Sessions view. Templates depend on Agents view (9A).
+> **Parallelizable**: Replay and Templates can be built by separate agents simultaneously.
+
+#### 11A. Replay Mode — Session Playback
+
+**What**: Rewind and replay any demon's session to see exactly how a decision was made, how a delegation chain unfolded, or where something went wrong.
+
+#### Concept
+
+Every demon's work is captured in OpenClaw sessions. Replay mode lets you step through a session message-by-message, like watching a recording. Useful for:
+- Debugging bad delegation chains ("Why did Calcifer route this to Paimon instead of Buer?")
+- Learning from successful workflows ("How did Malphas approach this scaffolding task?")
+- Auditing security decisions ("Show me Andromalius's full analysis")
+
+#### Design
+
+- **Accessed from**: Demon Chat Room (replay button on any message), Sessions view (replay button), Demon Health (replay last session)
+- **Playback controls**: Play / Pause / Step Forward / Step Back / Speed (1x, 2x, 5x, 10x)
+- **Timeline scrubber**: Visual bar showing message positions in the session
+- **Delegation highlighting**: When a message triggers a delegation, show a visual link to the target demon's session with a "Follow delegation" button
+- **Side-by-side mode**: Follow a delegation chain by showing parent and child sessions simultaneously
+- **Token counter**: Running total of tokens consumed during replay
+- **Model annotations**: Show when the demon switched models (fallback triggered)
+
+#### View
+
+Not a separate route — renders as a modal/overlay from other views.
+
+**New component**: `src/components/SessionReplay.tsx`
+
+```typescript
+interface SessionReplayProps {
+  sessionKey: string;
+  startFromMessageId?: string;  // jump to specific message
+}
+
+interface ReplayState {
+  sessionKey: string;
+  messages: Message[];
+  currentIndex: number;
+  isPlaying: boolean;
+  playbackSpeed: 1 | 2 | 5 | 10;
+  linkedSession: string | null;  // delegation target session
+}
+```
+
+#### View Layout
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Session Replay: calcifer-auth-refactor    [✕ Close] │
+│  ◄◄  ▶  ►►  │ Step 4 of 23  │ Speed: 2x │ ━━●━━━━  │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  [operator] 10:32am                                  │
+│  "Refactor the auth module to use Ed25519"           │
+│                                                      │
+│  [🔥 Calcifer] 10:32am · opus                       │
+│  "Analyzing complexity... This requires:             │
+│   1. Code audit (→ Buer)                             │
+│   2. Security review (→ Andromalius)                 │
+│   3. Implementation (→ Malphas)                      │
+│   Delegating step 1 first."                          │
+│                                                      │
+│  → DELEGATION to 📐 Buer                             │
+│    [Follow →] opens buer-audit-auth session          │
+│                                                      │
+│  ▸ [🔥 Calcifer] 10:35am · opus          (next msg) │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│  Tokens so far: 12,450 in · 3,200 out               │
+│  Model: anthropic/claude-opus-4-6                    │
+└──────────────────────────────────────────────────────┘
+```
+
+#### Files
+
+- **New**: `src/components/SessionReplay.tsx` — Replay overlay component
+- **Modify**: `src/views/DemonChatRoom.tsx` — Add replay button per message
+- **Modify**: `src/views/Sessions.tsx` — Add replay button per session
+- **Modify**: `src/views/DemonHealth.tsx` — Add "replay last session" per demon
+
+---
+
+#### 11B. Demon Templates — Quick-Spawn New Specialists
+
+**What**: Pre-built soul file templates so you can quickly create new demon agents with well-defined roles, without writing the system prompt from scratch.
+
+#### Concept
+
+The current 7 demons cover the core roles, but you may want to spin up ad-hoc specialists (e.g., a demon focused on a specific project, a temporary research assistant, a data pipeline demon). Templates provide a starting point.
+
+#### Built-in Templates
+
+| Template | Description | Default Model |
+|----------|-------------|---------------|
+| **Orchestrator** | Delegates tasks, coordinates workflows | `anthropic/claude-opus-4-6` |
+| **Code Architect** | Reviews, audits, optimizes code | `copilot/claude-3.5-sonnet` |
+| **Researcher** | Deep research, documentation, knowledge synthesis | `google/gemini-2.5-flash` |
+| **Strategist** | Planning, resource allocation, decision analysis | `copilot-openai/gpt-4o` |
+| **Builder** | Code generation, scaffolding, implementation | `copilot/claude-3.5-sonnet` |
+| **Security Analyst** | Threat monitoring, access control, vulnerability scanning | `anthropic/claude-sonnet-4-5` |
+| **Data Engineer** | Data pipelines, ETL, database management | `copilot-openai/gpt-4o` |
+| **DevOps** | Infrastructure, CI/CD, deployment automation | `copilot/claude-3.5-sonnet` |
+| **QA / Tester** | Test writing, test execution, bug reproduction | `copilot-openai/gpt-4o-mini` |
+| **Blank** | Empty soul file, define from scratch | (default) |
+
+Each template includes:
+- Pre-written soul file with role description, communication style, delegation rules
+- Suggested model assignment with fallback chain
+- Suggested CLI backend preferences
+- Recommended cron job templates for recurring tasks
+
+#### Integration into Agents View
+
+Enhance the existing Create Agent modal:
+
+1. **Step 1: Choose template** — grid of template cards (or "Blank")
+2. **Step 2: Customize** — pre-filled name, emoji, model based on template; user can override
+3. **Step 3: Create** — creates agent + writes soul file + sets model in config
+
+#### Template Storage
+
+Templates stored as static data in the frontend (no backend needed):
+
+**New file**: `src/lib/demonTemplates.ts`
+
+```typescript
+interface DemonTemplate {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  soulFile: string;           // markdown content for soul.md
+  suggestedModel: {
+    primary: string;
+    fallbacks: string[];
+  };
+  cliPreferences: {
+    preferred: 'claude-code' | 'codex' | 'either';
+    guidance: string;
+  };
+  suggestedCronJobs: Array<{
+    name: string;
+    schedule: string;
+    description: string;
+  }>;
+}
+```
+
+#### Files
+
+- **New**: `src/lib/demonTemplates.ts` — Template definitions
+- **Modify**: `src/views/Agents.tsx` — Enhance CreateAgentModal with template picker
+
+---
+
+### Phase 12: Integration & Wiring
+
+> **Dependencies**: All previous phases. This is the final assembly step.
+
+**What**: Wire up all new views into the app routing, navigation, and ensure everything works together.
+
+- Add routes to `src/App.tsx`: `/demon-chat`, `/demon-health`, `/demon-tasks`
+- Add nav items to `src/components/Sidebar.tsx` and `src/components/MobileNav.tsx`
+- Group new demon views under a "Demons" nav section (collapsible)
+- End-to-end testing: verify all views load, stores connect, events flow
+
+**Files**:
+- `src/App.tsx`, `src/components/Sidebar.tsx`, `src/components/MobileNav.tsx`
+
+---
+
+### Dependency Graph (for parallel agent assignment)
+
+```
+Phase 8 (Infrastructure — Mac Mini)
+  8A: Proxy Setup ──────────┐
+  8B: OpenClaw Config ──────┤── no Fireplace code deps
+  8C: Create Demon Agents ──┘
+
+Phase 9 (Enhance Existing Views — all parallelizable)
+  9A: Agents View ─────┐
+  9B: Usage View ──────┤
+  9C: Config View ─────┤── each can be a separate agent
+  9D: Models View ─────┤
+  9E: Cron View ───────┤
+  9F: Chat View ───────┘
+
+Phase 10 (New Demon Views — parallelizable, soft dep on 9A)
+  10A: Demon Chat Room ────┐
+  10B: CLI Backend (Approvals)──┤── each can be a separate agent
+  10C: Demon Health ───────┤
+  10D: Task Kanban ────────┘
+
+Phase 11 (Replay & Templates — depends on 10A + 9A)
+  11A: Session Replay ─────── depends on 10A (Chat Room), Sessions view
+  11B: Demon Templates ────── depends on 9A (Agents view)
+
+Phase 12 (Integration — depends on all above)
+  Wire routes, nav, end-to-end testing
+```
+
+**Recommended agent assignment** (6 agents working in parallel):
+
+| Agent | Assigned Work |
+|-------|---------------|
+| Agent 1 | 9A (Agents) + 11B (Templates) — sequential, same files |
+| Agent 2 | 9B (Usage) + 9C (Config) — sequential, related stores |
+| Agent 3 | 9D (Models) + 9E (Cron) + 9F (Chat) — sequential, smaller tasks |
+| Agent 4 | 10A (Demon Chat Room) + 11A (Replay) — sequential, Replay depends on Chat Room |
+| Agent 5 | 10C (Demon Health) + 10D (Task Kanban) — sequential, similar patterns |
+| Agent 6 | 10B (CLI Approvals) + 12 (Integration/Wiring) — sequential, Approvals first then final wiring |
+
+---
+
 ### Implementation Order
 
 | Step | What | Where |
 |------|------|-------|
-| 1 | Infrastructure: Docker, Copilot proxy, Gemini key | Mac Mini (no code) |
-| 1b | Install Claude Code + Codex CLI on Mac Mini | Mac Mini (no code) |
+| 1 | Infrastructure: Docker, Copilot proxy, Gemini key, Claude Code, Codex | Mac Mini (no code) |
 | 2 | OpenClaw config: providers, aliases, fallbacks | Mac Mini config file |
 | 3 | Create 7 demon agents + soul files (incl. CLI backend guidance) | Mac Mini CLI / Fireplace UI |
-| 4 | Enhance Agents store & view | `src/stores/agents.ts`, `src/views/Agents.tsx` |
+| 4 | Enhance Agents store & view + demon templates | `src/stores/agents.ts`, `src/views/Agents.tsx`, `src/lib/demonTemplates.ts` |
 | 5 | Enhance Usage store & view | `src/stores/usage.ts`, `src/views/Usage.tsx` |
 | 6 | Enhance Config store & view | `src/stores/config.ts`, `src/views/Config.tsx` |
 | 7 | Enhance Models view | `src/views/Models.tsx` |
 | 8 | Enhance Cron view | `src/views/Cron.tsx` |
 | 9 | Enhance Chat view | `src/views/Chat.tsx`, `src/stores/chat.ts` |
 | 10 | Build Demon Chat Room | `src/stores/demonChat.ts`, `src/views/DemonChatRoom.tsx` |
-| 11 | Configure CLI backend approvals | Via Fireplace Approvals view |
-| 12 | Enhance Approvals view for CLI backends | `src/views/Approvals.tsx` |
-| 13 | Create demon cron jobs | Via Fireplace Cron view |
+| 11 | Build Demon Health Dashboard | `src/stores/demonHealth.ts`, `src/views/DemonHealth.tsx` |
+| 12 | Build Task Queue / Kanban | `src/stores/demonTasks.ts`, `src/views/DemonKanban.tsx` |
+| 13 | Build Session Replay | `src/components/SessionReplay.tsx` |
+| 14 | Enhance Approvals view for CLI backends | `src/views/Approvals.tsx` |
+| 15 | Wire up routes + nav for new views | `src/App.tsx`, Sidebar, MobileNav |
+| 16 | Configure CLI backend approvals + create demon cron jobs | Via Fireplace UI |
 
 ### Files Modified & Created (Fireplace code)
 
@@ -970,17 +1410,24 @@ Enhance Approvals view to show CLI backend usage:
 | `src/stores/config.ts` | Modify | Add `parsedProviders` derived state, `testEndpoint()` |
 | `src/stores/chat.ts` | Modify | Batch attachment handling |
 | `src/stores/demonChat.ts` | **New** | Demon Chat Room store (inter-demon timeline) |
-| `src/views/Agents.tsx` | Modify | Model badge, cost tier, demon role display |
+| `src/stores/demonHealth.ts` | **New** | Demon health monitoring store |
+| `src/stores/demonTasks.ts` | **New** | Task queue / kanban store |
+| `src/lib/demonTemplates.ts` | **New** | Demon agent templates |
+| `src/views/Agents.tsx` | Modify | Model badge, cost tier, demon role, template picker |
 | `src/views/Usage.tsx` | Modify | Model distribution, per-demon cards, proxy health |
 | `src/views/Config.tsx` | Modify | Provider management section, routing overview |
 | `src/views/Models.tsx` | Modify | Cost info, demon assignments, free tier highlight |
 | `src/views/Cron.tsx` | Modify | Demon labels, filter, quick-create templates |
 | `src/views/Chat.tsx` | Modify | Bulk upload mode |
 | `src/views/DemonChatRoom.tsx` | **New** | Inter-demon chat room view |
+| `src/views/DemonHealth.tsx` | **New** | Demon health dashboard view |
+| `src/views/DemonKanban.tsx` | **New** | Task queue kanban view |
 | `src/views/Approvals.tsx` | Modify | CLI backend status section |
-| `src/App.tsx` | Modify | Add `/demon-chat` route |
-| `src/components/Sidebar.tsx` | Modify | Add Demon Chat Room nav item |
-| `src/components/MobileNav.tsx` | Modify | Add nav item (or under More) |
+| `src/views/Sessions.tsx` | Modify | Add replay button per session |
+| `src/components/SessionReplay.tsx` | **New** | Session replay overlay component |
+| `src/App.tsx` | Modify | Add routes: `/demon-chat`, `/demon-health`, `/demon-tasks` |
+| `src/components/Sidebar.tsx` | Modify | Add nav items for new views |
+| `src/components/MobileNav.tsx` | Modify | Add nav items (or under More) |
 
 ---
 
@@ -1030,6 +1477,14 @@ Enhance Approvals view to show CLI backend usage:
 - [ ] Demon Chat Room shows unified inter-demon timeline
 - [ ] Demon Chat Room filters work per-demon
 - [ ] Demon Chat Room inject message works
+- [ ] Demon Health Dashboard shows all 7 demons with status
+- [ ] Demon Health Dashboard updates in real time (working/idle transitions)
+- [ ] Task Kanban shows queued/in-progress/done columns
+- [ ] Task Kanban auto-tracks delegation events
+- [ ] Session Replay plays back messages with controls
+- [ ] Session Replay "Follow delegation" links to child session
+- [ ] Demon Templates appear in Create Agent modal
+- [ ] Creating agent from template pre-fills soul file + model
 - [ ] Approvals view shows CLI backend status
 
 #### Cost Validation
