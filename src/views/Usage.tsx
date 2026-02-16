@@ -5,7 +5,8 @@
 import { useEffect, useCallback, useState } from 'react';
 import { useUsageStore } from '@/stores/usage';
 import { useConnectionStore } from '@/stores/connection';
-import type { SessionUsageEntry } from '@/stores/usage';
+import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
+import type { SessionUsageEntry, DemonUsageEntry, ModelDistributionEntry } from '@/stores/usage';
 
 // ---- Token Formatter ------------------------------------------------------
 
@@ -13,6 +14,10 @@ function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(2)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
   return String(count);
+}
+
+function formatTokensWithCommas(count: number): string {
+  return count.toLocaleString();
 }
 
 function formatCost(usd: number): string {
@@ -55,6 +60,103 @@ function SummaryCard({
       <div className="text-xs text-zinc-400">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${valueColors[color]}`}>{value}</div>
       {detail && <div className="mt-0.5 text-xs text-zinc-500">{detail}</div>}
+    </div>
+  );
+}
+
+// ---- Model Distribution Bar -----------------------------------------------
+
+const TIER_BAR_COLORS: Record<string, string> = {
+  Free: 'bg-emerald-500',
+  'MAX Sub': 'bg-amber-500',
+  'Low Cost': 'bg-sky-500',
+  Premium: 'bg-violet-500',
+  Unknown: 'bg-zinc-500',
+};
+
+const TIER_DOT_COLORS: Record<string, string> = {
+  Free: 'bg-emerald-500',
+  'MAX Sub': 'bg-amber-500',
+  'Low Cost': 'bg-sky-500',
+  Premium: 'bg-violet-500',
+  Unknown: 'bg-zinc-500',
+};
+
+function ModelDistributionBar({ distribution }: { distribution: ModelDistributionEntry[] }) {
+  if (distribution.length === 0) return null;
+
+  const freePercentage = distribution
+    .filter((d) => d.tier === 'Free')
+    .reduce((sum, d) => sum + d.percentage, 0);
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-zinc-100">Model Distribution</h3>
+        {freePercentage > 0 && (
+          <span className="text-xs text-emerald-400">{freePercentage}% of requests at $0 cost</span>
+        )}
+      </div>
+
+      {/* Stacked bar */}
+      <div className="flex h-3 overflow-hidden rounded-full bg-zinc-700">
+        {distribution.map((d) => (
+          <div
+            key={d.tier}
+            className={`${TIER_BAR_COLORS[d.tier] ?? 'bg-zinc-500'} transition-all`}
+            style={{ width: `${d.percentage}%` }}
+            title={`${d.tier}: ${d.percentage}% (${formatTokensWithCommas(d.tokenCount)} tokens)`}
+          />
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div className="mt-2 flex flex-wrap gap-3">
+        {distribution.map((d) => (
+          <div key={d.tier} className="flex items-center gap-1.5">
+            <div className={`h-2 w-2 rounded-full ${TIER_DOT_COLORS[d.tier] ?? 'bg-zinc-500'}`} />
+            <span className="text-xs text-zinc-400">
+              {d.tier} {d.percentage}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- Per-Demon Usage Cards ------------------------------------------------
+
+function DemonUsageCard({ demon }: { demon: DemonUsageEntry }) {
+  const tierInfo = classifyModel(demon.model);
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
+      <div className="mb-1 text-sm font-medium text-zinc-100">{demon.demonName}</div>
+      <div className="text-lg font-semibold text-zinc-100">
+        {formatTokensWithCommas(demon.totalTokens)}
+      </div>
+      <div className="mt-0.5 text-xs text-zinc-500">
+        {demon.sessionCount} session{demon.sessionCount !== 1 ? 's' : ''}
+      </div>
+      <div className="mt-1.5">
+        <span className={tierBadgeClasses(tierInfo.tier)}>{tierInfo.label}</span>
+      </div>
+    </div>
+  );
+}
+
+function DemonUsageGrid({ demons }: { demons: DemonUsageEntry[] }) {
+  if (demons.length === 0) return null;
+
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-zinc-100">Per-Demon Usage</h3>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {demons.map((d) => (
+          <DemonUsageCard key={d.demonId} demon={d} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -159,7 +261,8 @@ function SortHeader({
 // ---- Main Usage View ------------------------------------------------------
 
 export function Usage() {
-  const { usage, sessionUsage, isLoading, error, loadAll } = useUsageStore();
+  const { usage, sessionUsage, demonUsage, modelDistribution, isLoading, error, loadAll } =
+    useUsageStore();
 
   const { status } = useConnectionStore();
 
@@ -257,6 +360,12 @@ export function Usage() {
                 </div>
               </div>
             )}
+
+            {/* Model Distribution */}
+            <ModelDistributionBar distribution={modelDistribution} />
+
+            {/* Per-Demon Usage */}
+            <DemonUsageGrid demons={demonUsage} />
 
             {/* Disclaimer */}
             <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">

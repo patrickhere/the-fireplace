@@ -34,6 +34,21 @@ export interface ConfigApplyResponse {
   error?: string;
 }
 
+// ---- Parsed Provider Types ------------------------------------------------
+
+export interface ParsedProvider {
+  name: string;
+  baseUrl: string;
+  api: string;
+  modelCount: number;
+}
+
+export interface EndpointTestResult {
+  provider: string;
+  status: 'ok' | 'error' | 'pending';
+  message?: string;
+}
+
 // ---- Store Types ----------------------------------------------------------
 
 interface ConfigState {
@@ -42,17 +57,22 @@ interface ConfigState {
   configHash: string | null;
   schema: unknown | null;
   uiHints: Record<string, UiHint>;
+  endpointResults: Map<string, EndpointTestResult>;
 
   // UI State
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
 
+  // Getters
+  parsedProviders: () => ParsedProvider[];
+
   // Actions
   loadConfig: () => Promise<void>;
   loadSchema: () => Promise<void>;
   saveConfig: (raw: string) => Promise<void>;
   patchConfig: (raw: string) => Promise<void>;
+  testEndpoint: (providerName: string) => Promise<EndpointTestResult>;
   reset: () => void;
 }
 
@@ -64,9 +84,35 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   configHash: null,
   schema: null,
   uiHints: {},
+  endpointResults: new Map(),
   isLoading: false,
   isSaving: false,
   error: null,
+
+  parsedProviders: (): ParsedProvider[] => {
+    const { rawConfig } = get();
+    if (!rawConfig) return [];
+    try {
+      const parsed = JSON.parse(rawConfig) as Record<string, unknown>;
+      const models = parsed.models as Record<string, unknown> | undefined;
+      if (!models) return [];
+      const providers = models.providers as Record<string, unknown> | undefined;
+      if (!providers || typeof providers !== 'object') return [];
+
+      return Object.entries(providers).map(([name, value]) => {
+        const p = value as Record<string, unknown>;
+        const modelsArr = Array.isArray(p.models) ? p.models : [];
+        return {
+          name,
+          baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
+          api: typeof p.api === 'string' ? p.api : 'unknown',
+          modelCount: modelsArr.length,
+        };
+      });
+    } catch {
+      return [];
+    }
+  },
 
   loadConfig: async () => {
     const { useConnectionStore } = await import('./connection');
@@ -158,12 +204,54 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     }
   },
 
+  testEndpoint: async (providerName: string): Promise<EndpointTestResult> => {
+    const pending: EndpointTestResult = { provider: providerName, status: 'pending' };
+    set((state) => {
+      const next = new Map(state.endpointResults);
+      next.set(providerName, pending);
+      return { endpointResults: next };
+    });
+
+    try {
+      const { useConnectionStore } = await import('./connection');
+      const { request } = useConnectionStore.getState();
+
+      // Use models.list to verify the provider responds
+      await request<{ models: unknown[] }>('models.list', {});
+
+      const result: EndpointTestResult = {
+        provider: providerName,
+        status: 'ok',
+        message: 'Endpoint healthy',
+      };
+      set((state) => {
+        const next = new Map(state.endpointResults);
+        next.set(providerName, result);
+        return { endpointResults: next };
+      });
+      return result;
+    } catch (err) {
+      const result: EndpointTestResult = {
+        provider: providerName,
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Connection failed',
+      };
+      set((state) => {
+        const next = new Map(state.endpointResults);
+        next.set(providerName, result);
+        return { endpointResults: next };
+      });
+      return result;
+    }
+  },
+
   reset: () => {
     set({
       rawConfig: null,
       configHash: null,
       schema: null,
       uiHints: {},
+      endpointResults: new Map(),
       isLoading: false,
       isSaving: false,
       error: null,
