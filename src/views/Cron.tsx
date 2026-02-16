@@ -15,6 +15,14 @@ import type {
 } from '@/stores/cron';
 import type { Agent } from '@/stores/agents';
 
+const DEMON_PULSE_CRON_ID = '893f56fb-02d3-4521-8be4-ed474fe26c60';
+
+interface VerifiedCheckEntry {
+  command: string;
+  output: string;
+  isError?: boolean;
+}
+
 // ---- Quick-Create Templates -----------------------------------------------
 
 interface CronTemplate {
@@ -717,13 +725,15 @@ function QuickCreateDropdown({ onSelect }: { onSelect: (template: CronTemplate) 
 export function Cron() {
   const { jobs, isLoading, error, loadJobs } = useCronStore();
   const { agents, loadAgents } = useAgentsStore();
-  const { status } = useConnectionStore();
+  const { status, request } = useConnectionStore();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [demonTasksOnly, setDemonTasksOnly] = useState(false);
   const [templateValues, setTemplateValues] = useState<Partial<CronTemplate> | undefined>(
     undefined
   );
+  const [isRunningVerifiedCheck, setIsRunningVerifiedCheck] = useState(false);
+  const [verifiedCheckEntries, setVerifiedCheckEntries] = useState<VerifiedCheckEntry[]>([]);
 
   // Load on mount
   useEffect(() => {
@@ -744,6 +754,61 @@ export function Cron() {
     setTemplateValues(template);
     setShowAddForm(true);
   }, []);
+
+  const runVerifiedHealthCheck = useCallback(async () => {
+    setIsRunningVerifiedCheck(true);
+    setVerifiedCheckEntries([]);
+
+    const entries: VerifiedCheckEntry[] = [];
+    const runStep = async (command: string, method: string, params: unknown): Promise<boolean> => {
+      try {
+        const response = await request<unknown>(method, params);
+        entries.push({
+          command,
+          output: JSON.stringify(response, null, 2),
+        });
+        setVerifiedCheckEntries([...entries]);
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        entries.push({
+          command,
+          output: message,
+          isError: true,
+        });
+        setVerifiedCheckEntries([...entries]);
+        return false;
+      }
+    };
+
+    const ok1 = await runStep(
+      "/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call channels.status --json --params '{}'",
+      'channels.status',
+      {}
+    );
+    if (!ok1) {
+      setIsRunningVerifiedCheck(false);
+      return;
+    }
+
+    const ok2 = await runStep(
+      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.run --json --params '{\"id\":\"${DEMON_PULSE_CRON_ID}\"}'`,
+      'cron.run',
+      { id: DEMON_PULSE_CRON_ID }
+    );
+    if (!ok2) {
+      setIsRunningVerifiedCheck(false);
+      return;
+    }
+
+    await runStep(
+      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.runs --json --params '{\"id\":\"${DEMON_PULSE_CRON_ID}\",\"limit\":10}'`,
+      'cron.runs',
+      { id: DEMON_PULSE_CRON_ID, limit: 10 }
+    );
+
+    setIsRunningVerifiedCheck(false);
+  }, [request]);
 
   const sortedJobs = useMemo(() => {
     let filtered = [...jobs];
@@ -808,6 +873,14 @@ export function Cron() {
             Refresh
           </button>
           <button
+            onClick={() => void runVerifiedHealthCheck()}
+            disabled={status !== 'connected' || isRunningVerifiedCheck}
+            className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+            type="button"
+          >
+            {isRunningVerifiedCheck ? 'Running Check...' : 'Verified Health Check'}
+          </button>
+          <button
             onClick={() => {
               setShowAddForm(!showAddForm);
               if (showAddForm) setTemplateValues(undefined);
@@ -829,6 +902,38 @@ export function Cron() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3">
+        {/* Verified health check output */}
+        {verifiedCheckEntries.length > 0 && (
+          <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-100">Verified Health Check Output</h3>
+              <button
+                onClick={() => setVerifiedCheckEntries([])}
+                className="rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
+                type="button"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {verifiedCheckEntries.map((entry) => (
+                <div
+                  key={`${entry.command}-${entry.output.slice(0, 16)}`}
+                  className={`rounded border p-2 ${
+                    entry.isError ? 'border-red-700 bg-red-950/20' : 'border-zinc-700 bg-zinc-950/30'
+                  }`}
+                >
+                  <div className="mb-1 text-xs text-zinc-400">{entry.command}</div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">
+                    {entry.output}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Add Job Form */}
         {showAddForm && (
           <div className="mb-4">
