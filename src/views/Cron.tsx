@@ -5,6 +5,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useCronStore } from '@/stores/cron';
 import { useConnectionStore } from '@/stores/connection';
+import { useAgentsStore } from '@/stores/agents';
 import type {
   CronJob,
   CronAddParams,
@@ -12,6 +13,63 @@ import type {
   CronPayload,
   CronRunLogEntry,
 } from '@/stores/cron';
+import type { Agent } from '@/stores/agents';
+
+// ---- Quick-Create Templates -----------------------------------------------
+
+interface CronTemplate {
+  label: string;
+  name: string;
+  agentId: string;
+  scheduleKind: 'at' | 'every' | 'cron';
+  scheduleValue: string;
+  payloadKind: 'systemEvent' | 'agentTurn';
+  payloadMessage: string;
+  description: string;
+}
+
+const CRON_TEMPLATES: CronTemplate[] = [
+  {
+    label: 'System Audit',
+    name: 'System Audit',
+    agentId: 'buer',
+    scheduleKind: 'every',
+    scheduleValue: '6h',
+    payloadKind: 'agentTurn',
+    payloadMessage: 'Run a system audit',
+    description: 'Audit codebase, report optimization opportunities',
+  },
+  {
+    label: 'Context Cleanup',
+    name: 'Context Cleanup',
+    agentId: 'alloces',
+    scheduleKind: 'every',
+    scheduleValue: '4h',
+    payloadKind: 'agentTurn',
+    payloadMessage: 'Check session sizes, compact bloated sessions',
+    description: 'Check session sizes, compact bloated sessions',
+  },
+  {
+    label: 'Security Scan',
+    name: 'Security Scan',
+    agentId: 'andromalius',
+    scheduleKind: 'cron',
+    scheduleValue: '0 3 * * *',
+    payloadKind: 'agentTurn',
+    payloadMessage: 'Review access logs, check for anomalies',
+    description: 'Review access logs, check for anomalies',
+  },
+  {
+    label: 'Knowledge Sync',
+    name: 'Knowledge Sync',
+    agentId: 'paimon',
+    scheduleKind: 'cron',
+    scheduleValue: '0 9 * * *',
+    payloadKind: 'agentTurn',
+    payloadMessage: 'Aggregate overnight research, update docs',
+    description: 'Aggregate overnight research, update docs',
+  },
+];
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -58,6 +116,11 @@ function statusColor(status: string | undefined): string {
     default:
       return 'bg-zinc-500';
   }
+}
+
+function findAgent(agents: Agent[], agentId: string | undefined): Agent | undefined {
+  if (!agentId) return undefined;
+  return agents.find((a) => a.id === agentId);
 }
 
 // ---- Confirm Dialog -------------------------------------------------------
@@ -149,21 +212,40 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
 function AddJobForm({
   onSubmit,
   onCancel,
+  initialValues,
 }: {
   onSubmit: (params: CronAddParams) => void;
   onCancel: () => void;
+  initialValues?: Partial<CronTemplate>;
 }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [scheduleKind, setScheduleKind] = useState<'at' | 'every' | 'cron'>('every');
-  const [scheduleValue, setScheduleValue] = useState('');
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [description, setDescription] = useState(initialValues?.description ?? '');
+  const [scheduleKind, setScheduleKind] = useState<'at' | 'every' | 'cron'>(
+    initialValues?.scheduleKind ?? 'every'
+  );
+  const [scheduleValue, setScheduleValue] = useState(initialValues?.scheduleValue ?? '');
   const [timezone, setTimezone] = useState('');
   const [sessionTarget, setSessionTarget] = useState<'main' | 'isolated'>('main');
   const [wakeMode, setWakeMode] = useState<'next-heartbeat' | 'now'>('now');
-  const [payloadKind, setPayloadKind] = useState<'systemEvent' | 'agentTurn'>('agentTurn');
-  const [payloadMessage, setPayloadMessage] = useState('');
-  const [agentId, setAgentId] = useState('');
+  const [payloadKind, setPayloadKind] = useState<'systemEvent' | 'agentTurn'>(
+    initialValues?.payloadKind ?? 'agentTurn'
+  );
+  const [payloadMessage, setPayloadMessage] = useState(initialValues?.payloadMessage ?? '');
+  const [agentId, setAgentId] = useState(initialValues?.agentId ?? '');
   const [enabled, setEnabled] = useState(true);
+
+  // Sync initial values when template changes
+  useEffect(() => {
+    if (initialValues) {
+      setName(initialValues.name ?? '');
+      setDescription(initialValues.description ?? '');
+      setScheduleKind(initialValues.scheduleKind ?? 'every');
+      setScheduleValue(initialValues.scheduleValue ?? '');
+      setPayloadKind(initialValues.payloadKind ?? 'agentTurn');
+      setPayloadMessage(initialValues.payloadMessage ?? '');
+      setAgentId(initialValues.agentId ?? '');
+    }
+  }, [initialValues]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -378,7 +460,7 @@ function AddJobForm({
 
 // ---- Job Row (Expandable) -------------------------------------------------
 
-function JobRow({ job }: { job: CronJob }) {
+function JobRow({ job, agents }: { job: CronJob; agents: Agent[] }) {
   const { updateJob, removeJob, triggerJob, loadRuns, runHistory } = useCronStore();
 
   const [expanded, setExpanded] = useState(false);
@@ -386,6 +468,7 @@ function JobRow({ job }: { job: CronJob }) {
   const [isTriggering, setIsTriggering] = useState(false);
 
   const runs = runHistory[job.id] ?? [];
+  const agent = findAgent(agents, job.agentId);
 
   const handleToggleEnabled = useCallback(async () => {
     await updateJob(job.id, { enabled: !job.enabled });
@@ -422,11 +505,21 @@ function JobRow({ job }: { job: CronJob }) {
           <div className={`h-2 w-2 rounded-full ${statusColor(job.state.lastStatus)}`} />
         </td>
 
-        {/* Name */}
+        {/* Name + Demon */}
         <td className="py-2.5 pr-3">
-          <div className="text-sm font-medium text-zinc-100">{job.name}</div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-zinc-100">{job.name}</span>
+            {agent && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-zinc-700/50 px-1.5 py-0.5 text-xs text-zinc-300">
+                <span>{agent.identity?.emoji ?? '?'}</span>
+                <span className="text-zinc-400">{agent.identity?.name ?? agent.id}</span>
+              </span>
+            )}
+          </div>
           {job.description && <div className="text-xs text-zinc-500">{job.description}</div>}
-          {job.agentId && <span className="text-xs text-zinc-600">agent: {job.agentId}</span>}
+          {job.agentId && !agent && (
+            <span className="text-xs text-zinc-600">agent: {job.agentId}</span>
+          )}
         </td>
 
         {/* Schedule */}
@@ -575,29 +668,87 @@ function JobRow({ job }: { job: CronJob }) {
   );
 }
 
+// ---- Quick Create Dropdown ------------------------------------------------
+
+function QuickCreateDropdown({ onSelect }: { onSelect: (template: CronTemplate) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-600"
+        type="button"
+      >
+        Quick Create
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-50 mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+            {CRON_TEMPLATES.map((t) => (
+              <button
+                key={t.label}
+                onClick={() => {
+                  onSelect(t);
+                  setOpen(false);
+                }}
+                className="flex w-full flex-col px-3 py-2 text-left hover:bg-zinc-800"
+                type="button"
+              >
+                <span className="text-sm text-zinc-100">{t.label}</span>
+                <span className="text-xs text-zinc-500">{t.description}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---- Main Cron View -------------------------------------------------------
 
 export function Cron() {
   const { jobs, isLoading, error, loadJobs } = useCronStore();
+  const { agents, loadAgents } = useAgentsStore();
   const { status } = useConnectionStore();
 
   const [showAddForm, setShowAddForm] = useState(false);
+  const [demonTasksOnly, setDemonTasksOnly] = useState(false);
+  const [templateValues, setTemplateValues] = useState<Partial<CronTemplate> | undefined>(
+    undefined
+  );
 
   // Load on mount
   useEffect(() => {
     if (status === 'connected') {
       loadJobs();
+      loadAgents();
     }
-  }, [status, loadJobs]);
+  }, [status, loadJobs, loadAgents]);
 
   const handleAddJob = useCallback(async (params: CronAddParams) => {
     const { addJob } = useCronStore.getState();
     await addJob(params);
     setShowAddForm(false);
+    setTemplateValues(undefined);
+  }, []);
+
+  const handleQuickCreate = useCallback((template: CronTemplate) => {
+    setTemplateValues(template);
+    setShowAddForm(true);
   }, []);
 
   const sortedJobs = useMemo(() => {
-    return [...jobs].sort((a, b) => {
+    let filtered = [...jobs];
+
+    // Filter to demon tasks only
+    if (demonTasksOnly) {
+      filtered = filtered.filter((j) => j.agentId);
+    }
+
+    return filtered.sort((a, b) => {
       // Running jobs first, then by next run time
       if (a.state.runningAtMs && !b.state.runningAtMs) return -1;
       if (!a.state.runningAtMs && b.state.runningAtMs) return 1;
@@ -605,10 +756,11 @@ export function Cron() {
       const bNext = b.state.nextRunAtMs ?? Infinity;
       return aNext - bNext;
     });
-  }, [jobs]);
+  }, [jobs, demonTasksOnly]);
 
   const enabledCount = jobs.filter((j) => j.enabled).length;
   const errorCount = jobs.filter((j) => j.state.lastStatus === 'error').length;
+  const demonJobCount = jobs.filter((j) => j.agentId).length;
 
   return (
     <div className="flex h-full flex-col">
@@ -621,11 +773,27 @@ export function Cron() {
               {jobs.length} job{jobs.length !== 1 ? 's' : ''}
             </span>
             <span>{enabledCount} enabled</span>
+            <span>{demonJobCount} demon tasks</span>
             {errorCount > 0 && <span className="text-red-400">{errorCount} with errors</span>}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Demon Tasks filter toggle */}
+          <button
+            onClick={() => setDemonTasksOnly(!demonTasksOnly)}
+            className={`rounded-md px-3 py-1.5 text-sm ${
+              demonTasksOnly
+                ? 'bg-amber-500/20 text-amber-400'
+                : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            type="button"
+          >
+            Demon Tasks
+          </button>
+
+          <QuickCreateDropdown onSelect={handleQuickCreate} />
+
           <button
             onClick={() => loadJobs()}
             disabled={isLoading}
@@ -635,7 +803,10 @@ export function Cron() {
             Refresh
           </button>
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={() => {
+              setShowAddForm(!showAddForm);
+              if (showAddForm) setTemplateValues(undefined);
+            }}
             className="rounded-md bg-amber-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-400"
             type="button"
           >
@@ -656,7 +827,14 @@ export function Cron() {
         {/* Add Job Form */}
         {showAddForm && (
           <div className="mb-4">
-            <AddJobForm onSubmit={handleAddJob} onCancel={() => setShowAddForm(false)} />
+            <AddJobForm
+              onSubmit={handleAddJob}
+              onCancel={() => {
+                setShowAddForm(false);
+                setTemplateValues(undefined);
+              }}
+              initialValues={templateValues}
+            />
           </div>
         )}
 
@@ -667,6 +845,13 @@ export function Cron() {
             <p className="text-sm text-zinc-500">No cron jobs configured.</p>
             <p className="mt-1 text-xs text-zinc-600">
               Click "Add Job" to create a scheduled automation.
+            </p>
+          </div>
+        ) : sortedJobs.length === 0 && demonTasksOnly ? (
+          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 p-4 text-center">
+            <p className="text-sm text-zinc-500">No demon tasks found.</p>
+            <p className="mt-1 text-xs text-zinc-600">
+              Use "Quick Create" to add common demon task templates.
             </p>
           </div>
         ) : (
@@ -684,7 +869,7 @@ export function Cron() {
               </thead>
               <tbody>
                 {sortedJobs.map((job) => (
-                  <JobRow key={job.id} job={job} />
+                  <JobRow key={job.id} job={job} agents={agents} />
                 ))}
               </tbody>
             </table>

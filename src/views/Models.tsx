@@ -5,7 +5,22 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useModelsStore } from '@/stores/models';
 import { useConnectionStore } from '@/stores/connection';
+import { useAgentsStore } from '@/stores/agents';
+import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
 import type { ModelChoice } from '@/stores/models';
+import type { Agent } from '@/stores/agents';
+
+// ---- Known demon model assignments (from OpenClaw config) -----------------
+
+const DEMON_MODEL_ASSIGNMENTS: Record<string, string> = {
+  calcifer: 'anthropic/claude-sonnet-4-5',
+  buer: 'copilot-free/gpt-4.1',
+  paimon: 'google/gemini-2.5-flash',
+  alloces: 'copilot-free/gpt-4.1',
+  dantalion: 'copilot-free/gpt-5-mini',
+  andromalius: 'copilot-free/gpt-4.1',
+  malphas: 'copilot-free/gpt-4.1',
+};
 
 // ---- Context Window Formatter ---------------------------------------------
 
@@ -16,23 +31,57 @@ function formatContextWindow(tokens?: number): string {
   return String(tokens);
 }
 
+// ---- Build demon-to-model reverse map -------------------------------------
+
+function buildModelDemonMap(agents: Agent[]): Record<string, Agent[]> {
+  const map: Record<string, Agent[]> = {};
+  for (const agent of agents) {
+    const primaryModel = DEMON_MODEL_ASSIGNMENTS[agent.id];
+    if (!primaryModel) continue;
+    if (!map[primaryModel]) {
+      map[primaryModel] = [];
+    }
+    map[primaryModel].push(agent);
+  }
+  return map;
+}
+
+// ---- Demon Badge ----------------------------------------------------------
+
+function DemonBadge({ agent }: { agent: Agent }) {
+  const emoji = agent.identity?.emoji ?? '?';
+  const name = agent.identity?.name ?? agent.id;
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 rounded bg-zinc-700/50 px-1.5 py-0.5 text-xs text-zinc-300"
+      title={name}
+    >
+      <span>{emoji}</span>
+      <span className="text-zinc-400">{name}</span>
+    </span>
+  );
+}
+
 // ---- Model Card Component -------------------------------------------------
 
 function ModelCard({
   model,
   isCurrent,
   onSelect,
+  assignedDemons,
 }: {
   model: ModelChoice;
   isCurrent: boolean;
   onSelect: () => void;
+  assignedDemons: Agent[];
 }) {
   const [isSettling, setIsSettling] = useState(false);
+  const tierInfo = classifyModel(`${model.provider}/${model.id}`);
+  const badgeClasses = tierBadgeClasses(tierInfo.tier);
 
   const handleSet = async () => {
     setIsSettling(true);
     onSelect();
-    // The store will update currentModelId optimistically
     setTimeout(() => setIsSettling(false), 1000);
   };
 
@@ -55,9 +104,12 @@ function ModelCard({
             )}
           </div>
 
-          <div className="text-xs text-zinc-500">{model.provider}</div>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-xs text-zinc-500">{model.provider}</span>
+            <span className={badgeClasses}>{tierInfo.label}</span>
+          </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {model.contextWindow && (
               <span className="rounded-md bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-400">
                 {formatContextWindow(model.contextWindow)} context
@@ -69,6 +121,16 @@ function ModelCard({
               </span>
             )}
           </div>
+
+          {/* Assigned Demons */}
+          {assignedDemons.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              <span className="text-xs text-zinc-500">Demons:</span>
+              {assignedDemons.map((agent) => (
+                <DemonBadge key={agent.id} agent={agent} />
+              ))}
+            </div>
+          )}
         </div>
 
         {!isCurrent && (
@@ -90,18 +152,22 @@ function ModelCard({
 
 export function Models() {
   const { models, currentModelId, isLoading, error, loadModels, setModel } = useModelsStore();
-
+  const { agents, loadAgents } = useAgentsStore();
   const { status } = useConnectionStore();
 
   const load = useCallback(() => {
     loadModels();
-  }, [loadModels]);
+    loadAgents();
+  }, [loadModels, loadAgents]);
 
   useEffect(() => {
     if (status === 'connected') {
       load();
     }
   }, [status, load]);
+
+  // Build reverse map: modelId -> demons using it as primary
+  const modelDemonMap = useMemo(() => buildModelDemonMap(agents), [agents]);
 
   // Group models by provider
   const groupedModels = useMemo(() => {
@@ -123,6 +189,16 @@ export function Models() {
     return entries;
   }, [models, currentModelId]);
 
+  // Count models by tier
+  const tierCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const model of models) {
+      const tier = classifyModel(`${model.provider}/${model.id}`);
+      counts[tier.label] = (counts[tier.label] || 0) + 1;
+    }
+    return counts;
+  }, [models]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -130,7 +206,7 @@ export function Models() {
         <h1 className="text-lg font-semibold text-zinc-100">Models</h1>
         <p className="text-sm text-zinc-400">Available AI models</p>
 
-        <div className="mt-3 flex items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={load}
             disabled={isLoading}
@@ -142,6 +218,11 @@ export function Models() {
           <span className="text-xs text-zinc-500">
             {models.length} model{models.length !== 1 ? 's' : ''} available
           </span>
+          {Object.entries(tierCounts).map(([label, count]) => (
+            <span key={label} className="text-xs text-zinc-500">
+              {count} {label}
+            </span>
+          ))}
           {currentModelId && (
             <span className="text-xs text-zinc-400">
               Current: <span className="text-amber-400">{currentModelId}</span>
@@ -178,6 +259,7 @@ export function Models() {
                       model={model}
                       isCurrent={model.id === currentModelId}
                       onSelect={() => setModel(model.id)}
+                      assignedDemons={modelDemonMap[`${model.provider}/${model.id}`] ?? []}
                     />
                   ))}
                 </div>

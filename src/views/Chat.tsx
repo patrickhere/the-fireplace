@@ -337,12 +337,20 @@ function AttachmentPreview({
 // ---- Message Input --------------------------------------------------------
 
 function MessageInput() {
-  const { sendMessage, isStreaming, abortStream, attachments, addAttachment, removeAttachment } =
-    useChatStore();
+  const {
+    sendMessage,
+    isStreaming,
+    abortStream,
+    attachments,
+    addAttachment,
+    addMultipleAttachments,
+    removeAttachment,
+  } = useChatStore();
   const [input, setInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -393,6 +401,15 @@ function MessageInput() {
     });
   };
 
+  const handleBulkUpload = () => {
+    bulkFileInputRef.current?.click();
+  };
+
+  const handleBulkFileSelect = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    addMultipleAttachments(Array.from(files));
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -435,14 +452,22 @@ function MessageInput() {
     >
       {/* Attachments preview */}
       {attachments.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {attachments.map((att) => (
-            <AttachmentPreview
-              key={att.id}
-              attachment={att}
-              onRemove={() => removeAttachment(att.id)}
-            />
-          ))}
+        <div className="mb-2">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-xs text-zinc-500">Attachments</span>
+            <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-400">
+              {attachments.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((att) => (
+              <AttachmentPreview
+                key={att.id}
+                attachment={att}
+                onRemove={() => removeAttachment(att.id)}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -458,13 +483,37 @@ function MessageInput() {
           📎
         </button>
 
-        {/* Hidden file input */}
+        {/* Bulk Upload button */}
+        <button
+          onClick={handleBulkUpload}
+          className="flex-shrink-0 rounded-md bg-zinc-800 p-2 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+          type="button"
+          aria-label="Bulk upload files"
+          title="Bulk Upload"
+        >
+          📁
+        </button>
+
+        {/* Hidden file inputs */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
           className="hidden"
           onChange={(e) => handleFileSelect(e.target.files)}
+        />
+        <input
+          ref={bulkFileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            handleBulkFileSelect(e.target.files);
+            // Reset so the same files can be selected again
+            if (bulkFileInputRef.current) {
+              bulkFileInputRef.current.value = '';
+            }
+          }}
         />
 
         {/* Textarea */}
