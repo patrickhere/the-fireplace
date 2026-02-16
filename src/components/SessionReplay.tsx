@@ -12,7 +12,7 @@ interface SessionReplayProps {
   sessionKey: string;
   startFromMessageId?: string;
   onClose: () => void;
-  onFollowDelegation?: (sessionKey: string) => void;
+  onFollowAgent?: (agentId: string) => void;
 }
 
 // ---- Helpers --------------------------------------------------------------
@@ -59,7 +59,7 @@ export function SessionReplay({
   sessionKey,
   startFromMessageId,
   onClose,
-  onFollowDelegation,
+  onFollowAgent,
 }: SessionReplayProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -187,7 +187,12 @@ export function SessionReplay({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Session Replay"
+    >
       <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg border border-zinc-800 bg-zinc-950">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
@@ -310,10 +315,10 @@ export function SessionReplay({
                   </div>
 
                   {/* Follow delegation button */}
-                  {delegationTarget && onFollowDelegation && (
+                  {delegationTarget && onFollowAgent && (
                     <button
                       type="button"
-                      onClick={() => onFollowDelegation(delegationTarget)}
+                      onClick={() => onFollowAgent(delegationTarget)}
                       className="mt-1 rounded border border-amber-600/30 bg-amber-600/10 px-2 py-0.5 text-xs text-amber-400 hover:bg-amber-600/20"
                     >
                       Follow delegation &rarr; {delegationTarget}
