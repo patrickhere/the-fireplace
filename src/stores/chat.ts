@@ -68,6 +68,10 @@ export interface ChatEventPayload {
     code: string;
     message: string;
   };
+  // Alternate gateway shape (observed in OpenClaw UI/client code paths)
+  state?: 'delta' | 'final' | 'aborted' | 'error';
+  message?: unknown;
+  errorMessage?: string;
 }
 
 // ---- Store Types ----------------------------------------------------------
@@ -121,6 +125,28 @@ function generateMessageId(): string {
 
 function generateAttachmentId(): string {
   return `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function extractTextFromEventMessage(message: unknown): string {
+  if (typeof message === 'string') return message;
+  if (Array.isArray(message)) {
+    const parts = message
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'text' in item) {
+          const text = (item as { text?: unknown }).text;
+          return typeof text === 'string' ? text : '';
+        }
+        return '';
+      })
+      .filter(Boolean);
+    return parts.join('\n');
+  }
+  if (message && typeof message === 'object' && 'text' in message) {
+    const text = (message as { text?: unknown }).text;
+    return typeof text === 'string' ? text : '';
+  }
+  return '';
 }
 
 // ---- Store ----------------------------------------------------------------
@@ -383,18 +409,70 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Ignore events from other sessions
         if (payload.sessionKey !== currentSession) return;
 
-        // Track sequence numbers
+        // Track sequence numbers (if present)
         if (payload.seq > lastSeq) {
           set({ lastSeq: payload.seq });
         }
 
-        // Handle errors
+        // Handle error shape used by current store schema
         if (payload.error) {
           set({
             error: payload.error.message,
             isStreaming: false,
             streamingMessageId: null,
             streamingBuffer: '',
+          });
+          return;
+        }
+
+        // Handle alternate gateway schema: { state: 'error', errorMessage }
+        if (payload.state === 'error' || payload.errorMessage) {
+          set({
+            error: payload.errorMessage || 'Chat request failed',
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
+          });
+          return;
+        }
+
+        // Handle alternate gateway schema: { state: 'final' | 'aborted' }
+        if (payload.state === 'final' || payload.state === 'aborted') {
+          set({
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
+          });
+          return;
+        }
+
+        // Handle alternate gateway schema delta stream
+        if (payload.state === 'delta') {
+          const text = extractTextFromEventMessage(payload.message);
+          const newBuffer = text || streamingBuffer;
+          const messageId = streamingMessageId || payload.messageId || generateMessageId();
+
+          set({
+            streamingBuffer: newBuffer,
+            streamingMessageId: messageId,
+          });
+
+          set((state) => {
+            const existingIndex = state.messages.findIndex((m) => m.id === messageId);
+            const updatedMessage: Message = {
+              id: messageId,
+              role: 'assistant',
+              content: [{ type: 'text', text: newBuffer }],
+              timestamp: Date.now(),
+            };
+
+            if (existingIndex >= 0) {
+              const messages = [...state.messages];
+              messages[existingIndex] = updatedMessage;
+              return { messages };
+            }
+
+            return { messages: [...state.messages, updatedMessage] };
           });
           return;
         }
