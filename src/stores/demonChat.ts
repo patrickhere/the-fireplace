@@ -151,10 +151,11 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       try {
         const { useConnectionStore } = await import('./connection');
         const { useAgentsStore } = await import('./agents');
-        const { subscribe, request } = useConnectionStore.getState();
+        const { subscribe } = useConnectionStore.getState();
 
         const pullCronPulseSummaries = async (): Promise<void> => {
           try {
+            const { request } = useConnectionStore.getState();
             const jobsRes = await request<{
               jobs?: Array<{ id: string; name?: string; agentId?: string; payload?: { kind?: string } }>;
             }>('cron.list', { includeDisabled: true });
