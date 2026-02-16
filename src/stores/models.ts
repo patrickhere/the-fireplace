@@ -65,12 +65,16 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
 
   setModel: async (modelId: string) => {
     const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
+    const { request, snapshot } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
-      await request('model.set', { model: modelId });
+      const mainSessionKey = snapshot?.sessionDefaults?.mainKey ?? 'main';
+      await request('sessions.patch', {
+        key: mainSessionKey,
+        model: modelId,
+      });
 
       set({ currentModelId: modelId });
 
