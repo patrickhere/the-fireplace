@@ -5,7 +5,10 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useConfigStore } from '@/stores/config';
 import { useConnectionStore } from '@/stores/connection';
-import type { UiHint } from '@/stores/config';
+import { useAgentsStore } from '@/stores/agents';
+import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
+import type { UiHint, ParsedProvider, EndpointTestResult } from '@/stores/config';
+import type { Agent } from '@/stores/agents';
 
 // ---- Confirmation Dialog --------------------------------------------------
 
@@ -48,6 +51,228 @@ function ConfirmDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- Status Dot -----------------------------------------------------------
+
+function StatusDot({ status }: { status: 'ok' | 'error' | 'pending' | 'unknown' }) {
+  const colors: Record<string, string> = {
+    ok: 'bg-emerald-500',
+    error: 'bg-red-500',
+    pending: 'bg-amber-500 animate-pulse',
+    unknown: 'bg-zinc-500',
+  };
+  return <div className={`h-2 w-2 rounded-full ${colors[status]}`} />;
+}
+
+// ---- Model Providers Section ----------------------------------------------
+
+function ProviderRow({
+  provider,
+  testResult,
+  onTest,
+}: {
+  provider: ParsedProvider;
+  testResult: EndpointTestResult | undefined;
+  onTest: (name: string) => void;
+}) {
+  const status = testResult?.status ?? 'unknown';
+
+  return (
+    <div className="flex items-center gap-3 border-b border-zinc-700/50 px-3 py-2 last:border-0">
+      <StatusDot status={status} />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-zinc-100">{provider.name}</div>
+        <div className="truncate font-mono text-xs text-zinc-500">{provider.baseUrl}</div>
+      </div>
+      <span className="rounded border border-zinc-600 px-1.5 py-0.5 text-xs text-zinc-400">
+        {provider.api}
+      </span>
+      <span className="text-xs text-zinc-500">
+        {provider.modelCount} model{provider.modelCount !== 1 ? 's' : ''}
+      </span>
+      <button
+        onClick={() => onTest(provider.name)}
+        disabled={status === 'pending'}
+        className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+        type="button"
+      >
+        {status === 'pending' ? 'Testing...' : 'Test'}
+      </button>
+    </div>
+  );
+}
+
+function ModelProvidersSection({
+  providers,
+  endpointResults,
+  onTest,
+  isOpen,
+  onToggle,
+}: {
+  providers: ParsedProvider[];
+  endpointResults: Map<string, EndpointTestResult>;
+  onTest: (name: string) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-left"
+        type="button"
+      >
+        <h3 className="text-sm font-medium text-zinc-100">Model Providers ({providers.length})</h3>
+        <span className="text-xs text-zinc-500">{isOpen ? 'Collapse' : 'Expand'}</span>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-zinc-700">
+          {providers.length === 0 ? (
+            <div className="p-3 text-xs text-zinc-500">
+              No providers configured in models.providers
+            </div>
+          ) : (
+            providers.map((p) => (
+              <ProviderRow
+                key={p.name}
+                provider={p}
+                testResult={endpointResults.get(p.name)}
+                onTest={onTest}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Model Routing Section ------------------------------------------------
+
+interface RoutingRow {
+  agentId: string;
+  agentName: string;
+  primaryModel: string;
+  fallbacks: string[];
+  provider: string;
+  costTier: string;
+}
+
+function parseAgentRouting(rawConfig: string | null, agents: Agent[]): RoutingRow[] {
+  if (!rawConfig) return [];
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(rawConfig) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+
+  const agentsConfig = parsed.agents as Record<string, unknown> | undefined;
+  if (!agentsConfig) return [];
+
+  // Try agents.list from config for per-agent model assignments
+  const agentList = agentsConfig.list as
+    | Array<{
+        id?: string;
+        model?: { primary?: string; fallbacks?: string[] };
+      }>
+    | undefined;
+
+  if (!Array.isArray(agentList)) return [];
+
+  // Build agent identity lookup from the agents store
+  const agentMap = new Map(agents.map((a) => [a.id, a]));
+
+  return agentList
+    .filter((a) => a.id && a.model?.primary)
+    .map((a) => {
+      const agent = agentMap.get(a.id!);
+      const emoji = agent?.identity?.emoji ?? '';
+      const name = agent?.identity?.name ?? a.id!;
+      const primary = a.model!.primary!;
+      const fallbacks = a.model!.fallbacks ?? [];
+      const provider = primary.includes('/') ? (primary.split('/')[0] ?? 'unknown') : 'unknown';
+      const tierInfo = classifyModel(primary);
+
+      return {
+        agentId: a.id!,
+        agentName: emoji ? `${emoji} ${name}` : name,
+        primaryModel: primary,
+        fallbacks,
+        provider,
+        costTier: tierInfo.label,
+      };
+    });
+}
+
+function ModelRoutingSection({
+  routing,
+  isOpen,
+  onToggle,
+}: {
+  routing: RoutingRow[];
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-left"
+        type="button"
+      >
+        <h3 className="text-sm font-medium text-zinc-100">Model Routing ({routing.length})</h3>
+        <span className="text-xs text-zinc-500">{isOpen ? 'Collapse' : 'Expand'}</span>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-zinc-700">
+          {routing.length === 0 ? (
+            <div className="p-3 text-xs text-zinc-500">
+              No per-agent model routing found in config
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-zinc-700 bg-zinc-800/50">
+                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Demon</th>
+                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Primary Model</th>
+                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Fallbacks</th>
+                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Provider</th>
+                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Cost Tier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routing.map((r) => {
+                    const tierInfo = classifyModel(r.primaryModel);
+                    return (
+                      <tr key={r.agentId} className="border-b border-zinc-700/50 last:border-0">
+                        <td className="px-3 py-2 text-sm text-zinc-100">{r.agentName}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-zinc-300">
+                          {r.primaryModel}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-zinc-500">
+                          {r.fallbacks.length > 0 ? r.fallbacks.join(', ') : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-zinc-400">{r.provider}</td>
+                        <td className="px-3 py-2">
+                          <span className={tierBadgeClasses(tierInfo.tier)}>{r.costTier}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -165,28 +390,35 @@ export function Config() {
     rawConfig,
     configHash,
     uiHints,
+    endpointResults,
     isLoading,
     isSaving,
     error,
+    parsedProviders,
     loadConfig,
     loadSchema,
     saveConfig,
+    testEndpoint,
   } = useConfigStore();
 
   const { status } = useConnectionStore();
+  const { agents, loadAgents } = useAgentsStore();
 
   const [editorValue, setEditorValue] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showProviders, setShowProviders] = useState(true);
+  const [showRouting, setShowRouting] = useState(true);
 
   // Load config on mount
   useEffect(() => {
     if (status === 'connected') {
       loadConfig();
       loadSchema();
+      loadAgents();
     }
-  }, [status, loadConfig, loadSchema]);
+  }, [status, loadConfig, loadSchema, loadAgents]);
 
   // Sync raw config into editor when loaded
   useEffect(() => {
@@ -220,6 +452,8 @@ export function Config() {
     }
   }, [rawConfig]);
 
+  const providers = parsedProviders();
+  const routing = useMemo(() => parseAgentRouting(rawConfig, agents), [rawConfig, agents]);
   const hasHints = Object.keys(uiHints).length > 0;
 
   return (
@@ -306,8 +540,27 @@ export function Config() {
           </div>
         )}
 
-        {/* Editor Area */}
-        <div className="flex flex-1 flex-col p-3">
+        {/* Main Content Area */}
+        <div className="flex flex-1 flex-col overflow-y-auto p-3">
+          {/* Model Providers Section */}
+          <div className="mb-3 space-y-3">
+            <ModelProvidersSection
+              providers={providers}
+              endpointResults={endpointResults}
+              onTest={testEndpoint}
+              isOpen={showProviders}
+              onToggle={() => setShowProviders(!showProviders)}
+            />
+
+            <ModelRoutingSection
+              routing={routing}
+              isOpen={showRouting}
+              onToggle={() => setShowRouting(!showRouting)}
+            />
+          </div>
+
+          {/* Editor Area */}
+          <h3 className="mb-2 text-sm font-medium text-zinc-100">Raw JSON Editor</h3>
           {isLoading && rawConfig === null ? (
             <div className="flex flex-1 items-center justify-center">
               <span className="text-sm text-zinc-400">Loading configuration...</span>
