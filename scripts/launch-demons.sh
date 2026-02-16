@@ -310,8 +310,11 @@ LAUNCHER_EOF
 
     echo "  ${GREEN}🔥${NC} Launching ${BOLD}$NAME${NC}..."
 
-    # Try iTerm2, then Terminal.app, then tmux, then background
-    if osascript <<APPLE_EOF 2>/dev/null; then
+    # Detect SSH session — skip AppleScript, go straight to tmux
+    local IS_SSH=false
+    [[ -n "${SSH_TTY:-}" || -n "${SSH_CLIENT:-}" || -n "${SSH_CONNECTION:-}" ]] && IS_SSH=true
+
+    if [[ "$IS_SSH" = false ]] && osascript <<APPLE_EOF 2>/dev/null; then
 tell application "iTerm2"
     activate
     if (count of windows) = 0 then
@@ -330,7 +333,7 @@ tell application "iTerm2"
 end tell
 APPLE_EOF
       true
-    elif osascript -e "tell application \"Terminal\" to do script \"'${LAUNCHER}'\"" 2>/dev/null; then
+    elif [[ "$IS_SSH" = false ]] && osascript -e "tell application \"Terminal\" to do script \"'${LAUNCHER}'\"" 2>/dev/null; then
       true
     elif command -v tmux &>/dev/null; then
       # SSH-friendly: use tmux
