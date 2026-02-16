@@ -31,6 +31,7 @@ interface DemonChatState {
   // Internal
   _unsubscribe: Unsubscribe | null;
   _connUnsub: Unsubscribe | null;
+  _cronPoll: ReturnType<typeof setInterval> | null;
 
   // Actions
   startListening: () => void;
@@ -130,6 +131,7 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   isListening: false,
   _unsubscribe: null,
   _connUnsub: null,
+  _cronPoll: null,
 
   startListening: () => {
     const { isListening } = get();
@@ -138,17 +140,88 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
     if (isListening) return;
 
     // Clean up any stale subscriptions from a prior failed start
-    const { _unsubscribe, _connUnsub } = get();
+    const { _unsubscribe, _connUnsub, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
     if (_connUnsub) _connUnsub();
+    if (_cronPoll) clearInterval(_cronPoll);
 
-    set({ isListening: true, _unsubscribe: null, _connUnsub: null });
+    set({ isListening: true, _unsubscribe: null, _connUnsub: null, _cronPoll: null });
 
     (async () => {
       try {
         const { useConnectionStore } = await import('./connection');
         const { useAgentsStore } = await import('./agents');
-        const { subscribe } = useConnectionStore.getState();
+        const { subscribe, request } = useConnectionStore.getState();
+
+        const pullCronPulseSummaries = async (): Promise<void> => {
+          try {
+            const jobsRes = await request<{
+              jobs?: Array<{ id: string; name?: string; agentId?: string; payload?: { kind?: string } }>;
+            }>('cron.list', { includeDisabled: true });
+            const jobs = jobsRes.jobs ?? [];
+            const pulseJobs = jobs.filter(
+              (j) =>
+                (j.name ?? '').toLowerCase().includes('demon pulse') &&
+                (j.payload?.kind === 'agentTurn' || !j.payload?.kind)
+            );
+            if (pulseJobs.length === 0) return;
+
+            for (const job of pulseJobs) {
+              const runsRes = await request<{
+                entries?: Array<{
+                  jobId: string;
+                  sessionId?: string;
+                  sessionKey?: string;
+                  runAtMs?: number;
+                  ts?: number;
+                  status: string;
+                  summary?: string;
+                }>;
+              }>('cron.runs', { id: job.id, limit: 5 });
+
+              const entries = (runsRes.entries ?? []).filter(
+                (e) => e.status === 'ok' && typeof e.summary === 'string' && e.summary.length > 0
+              );
+              if (entries.length === 0) continue;
+
+              const allAgents = useAgentsStore.getState().agents;
+              const matchedAgent =
+                (job.agentId ? allAgents.find((a) => a.id === job.agentId) : undefined) ??
+                allAgents.find((a) => a.id === 'calcifer');
+              if (!matchedAgent) continue;
+
+              for (const entry of entries) {
+                const idSource =
+                  entry.sessionId ?? entry.sessionKey ?? `${entry.jobId}:${entry.runAtMs ?? entry.ts ?? 0}`;
+                const msgId = `cron_${idSource}`;
+
+                set((state) => {
+                  if (state.messages.some((m) => m.id === msgId)) return state;
+                  const msg: DemonChatMessage = {
+                    id: msgId,
+                    demonId: matchedAgent.id,
+                    demonName: matchedAgent.identity?.name ?? matchedAgent.id,
+                    demonEmoji: matchedAgent.identity?.emoji ?? '',
+                    sessionKey: entry.sessionKey ?? `cron:${entry.jobId}`,
+                    role: 'assistant',
+                    content: entry.summary ?? '',
+                    model: '',
+                    timestamp: entry.runAtMs ?? entry.ts ?? Date.now(),
+                    isDelegation: false,
+                  };
+
+                  const next = [...state.messages, msg];
+                  if (next.length > MAX_MESSAGES) {
+                    return { messages: next.slice(next.length - MAX_MESSAGES) };
+                  }
+                  return { messages: next };
+                });
+              }
+            }
+          } catch (error) {
+            console.error('[DemonChat] Failed to pull cron pulse summaries:', error);
+          }
+        };
 
         // Fresh Map on each startListening call prevents stale buffers on reconnect
         const streamBuffers = new Map<string, string>();
@@ -333,31 +406,45 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
           prevStatus = curr;
         });
 
+        // Fallback feed: cron pulse summaries are not always emitted on chat stream,
+        // so poll recent runs and inject summaries into this room.
+        await pullCronPulseSummaries();
+        const cronPoll = setInterval(() => {
+          void pullCronPulseSummaries();
+        }, 10_000);
+
         // Only mark as listening if we got a real subscription (not noop)
         const { status } = useConnectionStore.getState();
-        set({ _unsubscribe: unsub, _connUnsub: connUnsub, isListening: status === 'connected' });
+        set({
+          _unsubscribe: unsub,
+          _connUnsub: connUnsub,
+          _cronPoll: cronPoll,
+          isListening: status === 'connected',
+        });
       } catch (error) {
         console.error('[DemonChat] Failed to start listening:', error);
-        set({ isListening: false, _unsubscribe: null, _connUnsub: null });
+        set({ isListening: false, _unsubscribe: null, _connUnsub: null, _cronPoll: null });
       }
     })();
   },
 
   stopListening: () => {
-    const { _unsubscribe } = get();
+    const { _unsubscribe, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
+    if (_cronPoll) clearInterval(_cronPoll);
     // Note: _connUnsub is intentionally preserved so the connection watcher
     // can trigger auto-restart on reconnect. It is only cleared when the
     // view explicitly tears down via the cleanup in startListening or
     // when a new startListening call replaces it.
-    set({ _unsubscribe: null, isListening: false });
+    set({ _unsubscribe: null, _cronPoll: null, isListening: false });
   },
 
   teardown: () => {
-    const { _unsubscribe, _connUnsub } = get();
+    const { _unsubscribe, _connUnsub, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
     if (_connUnsub) _connUnsub();
-    set({ _unsubscribe: null, _connUnsub: null, isListening: false });
+    if (_cronPoll) clearInterval(_cronPoll);
+    set({ _unsubscribe: null, _connUnsub: null, _cronPoll: null, isListening: false });
   },
 
   toggleDemonFilter: (demonId: string) => {

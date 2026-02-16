@@ -184,10 +184,15 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
         </thead>
         <tbody>
           {runs.map((run) => (
-            <tr key={run.runId} className="border-b border-zinc-800">
-              <td className="py-1.5 pr-3 font-mono text-zinc-400">{run.runId.slice(0, 8)}</td>
+            <tr
+              key={run.runId ?? run.sessionId ?? `${run.jobId}-${run.runAtMs ?? run.ts ?? 0}`}
+              className="border-b border-zinc-800"
+            >
+              <td className="py-1.5 pr-3 font-mono text-zinc-400">
+                {(run.runId ?? run.sessionId ?? '--').slice(0, 8)}
+              </td>
               <td className="py-1.5 pr-3 text-zinc-400">
-                {new Date(run.startedAtMs).toLocaleString()}
+                {new Date(run.startedAtMs ?? run.runAtMs ?? run.ts ?? Date.now()).toLocaleString()}
               </td>
               <td className="py-1.5 pr-3 text-zinc-400">
                 {run.durationMs !== undefined ? `${run.durationMs}ms` : '--'}

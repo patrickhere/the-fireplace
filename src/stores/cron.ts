@@ -49,13 +49,18 @@ export interface CronJob {
 }
 
 export interface CronRunLogEntry {
-  runId: string;
+  runId?: string;
   jobId: string;
-  startedAtMs: number;
+  startedAtMs?: number;
   finishedAtMs?: number;
   status: string;
   error?: string;
   durationMs?: number;
+  runAtMs?: number;
+  ts?: number;
+  summary?: string;
+  sessionId?: string;
+  sessionKey?: string;
 }
 
 export interface CronListResponse {
@@ -63,7 +68,8 @@ export interface CronListResponse {
 }
 
 export interface CronRunsResponse {
-  runs: CronRunLogEntry[];
+  runs?: CronRunLogEntry[];
+  entries?: CronRunLogEntry[];
 }
 
 export interface CronAddParams {
@@ -208,11 +214,12 @@ export const useCronStore = create<CronState>((set, get) => ({
 
     try {
       const response = await request<CronRunsResponse>('cron.runs', { id });
+      const rows = response.entries ?? response.runs ?? [];
 
       set((state) => ({
         runHistory: {
           ...state.runHistory,
-          [id]: response.runs ?? [],
+          [id]: rows,
         },
       }));
     } catch (err) {
