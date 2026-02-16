@@ -39,7 +39,7 @@ function formatTimestamp(ts: number): string {
   });
 }
 
-/** Detect delegation mentions in message text and return potential session key. */
+/** Detect delegation mentions in message text and return the target agent ID token. */
 function detectDelegationTarget(text: string): string | null {
   const patterns = [
     /delegat(?:e|ing|ed)\s+(?:to|this\s+to)\s+(\w+)/i,

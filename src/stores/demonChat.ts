@@ -101,22 +101,17 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   _connUnsub: null,
 
   startListening: () => {
-    const { _unsubscribe, _connUnsub, isListening } = get();
-
-    // Avoid double-subscribe
-    if (_unsubscribe) {
-      _unsubscribe();
-    }
-    if (_connUnsub) {
-      _connUnsub();
-    }
+    const { isListening } = get();
 
     // Optimistic lock to prevent concurrent startListening calls
-    if (isListening) {
-      return;
-    }
+    if (isListening) return;
 
-    set({ isListening: true });
+    // Clean up any stale subscriptions from a prior failed start
+    const { _unsubscribe, _connUnsub } = get();
+    if (_unsubscribe) _unsubscribe();
+    if (_connUnsub) _connUnsub();
+
+    set({ isListening: true, _unsubscribe: null, _connUnsub: null });
 
     (async () => {
       try {
@@ -220,11 +215,20 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
           });
         });
 
-        // Watch for disconnects to auto-stop and clear transient state
+        // Watch for connection lifecycle to auto-stop/restart
+        let prevStatus = useConnectionStore.getState().status;
         const connUnsub = useConnectionStore.subscribe((state) => {
-          if (state.status === 'disconnected' || state.status === 'error') {
+          const curr = state.status;
+          if (curr === 'disconnected' || curr === 'error') {
             get().stopListening();
+          } else if (curr === 'connected' && prevStatus !== 'connected') {
+            // Auto-restart on reconnect (guard prevents loop since startListening checks isListening)
+            const { isListening: listening } = get();
+            if (!listening) {
+              get().startListening();
+            }
           }
+          prevStatus = curr;
         });
 
         // Only mark as listening if we got a real subscription (not noop)
