@@ -185,7 +185,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (text: string, attachmentsToSend?: Attachment[]) => {
-    const { activeSessionKey, attachments, sessionConfig } = get();
+    const { activeSessionKey, attachments } = get();
 
     if (!activeSessionKey) {
       set({ error: 'No active session' });
@@ -236,8 +236,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Send to gateway (non-blocking, responses come via events)
       await request('chat.send', {
         sessionKey: activeSessionKey,
-        message: content,
-        config: sessionConfig,
+        message: text,
         idempotencyKey: crypto.randomUUID(),
       });
 
