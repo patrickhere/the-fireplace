@@ -78,6 +78,9 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
     const { isMonitoring } = get();
     if (isMonitoring) return;
 
+    // Set immediately to prevent async race (duplicate subscriptions)
+    set({ isMonitoring: true });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { useAgentsStore } = await import('./agents');
@@ -185,6 +188,10 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
                 });
               }
             }
+            // Self-remove from tracked timeouts to prevent memory leak
+            set((state) => ({
+              _execTimeouts: state._execTimeouts.filter((t) => t !== timeoutId),
+            }));
           },
           10 * 60 * 1000
         );
@@ -207,7 +214,6 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
       }, 30_000);
 
       set({
-        isMonitoring: true,
         _chatUnsub: chatUnsub,
         _execUnsub: execUnsub,
         _idleCheckInterval: idleCheckInterval,

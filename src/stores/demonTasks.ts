@@ -67,6 +67,9 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
     const { isTracking } = get();
     if (isTracking) return;
 
+    // Set immediately to prevent async race (duplicate subscriptions)
+    set({ isTracking: true });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { useAgentsStore } = await import('./agents');
@@ -187,7 +190,7 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
         }
       });
 
-      set({ isTracking: true, _chatUnsub: chatUnsub });
+      set({ _chatUnsub: chatUnsub });
     })();
   },
 

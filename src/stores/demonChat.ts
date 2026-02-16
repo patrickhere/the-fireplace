@@ -150,7 +150,7 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
         } else {
           // For streams without messageId, assign a unique key per active stream
           let existing = activeAnonKeys.get(sessionKey);
-          if (!existing || payload.done) {
+          if (!existing) {
             anonStreamCounter += 1;
             existing = `${sessionKey}:anon:${anonStreamCounter}`;
             activeAnonKeys.set(sessionKey, existing);

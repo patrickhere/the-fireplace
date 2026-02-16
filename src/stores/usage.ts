@@ -175,8 +175,9 @@ export const useUsageStore = create<UsageState>((set) => ({
 
       const response = await request<{
         sessions: Array<{
-          sessionKey: string;
+          key: string;
           name?: string;
+          label?: string;
           model?: string;
           agentId?: string;
           inputTokens?: number;
@@ -191,8 +192,8 @@ export const useUsageStore = create<UsageState>((set) => ({
 
       const sessionUsage: SessionUsageEntry[] = sessions
         .map((s) => ({
-          sessionKey: s.sessionKey,
-          name: s.name ?? s.sessionKey,
+          sessionKey: s.key,
+          name: s.name ?? s.label ?? s.key,
           model: s.model ?? 'unknown',
           agentId: s.agentId ?? '',
           inputTokens: s.inputTokens ?? 0,
@@ -229,8 +230,9 @@ export const useUsageStore = create<UsageState>((set) => ({
         }>('sessions.usage', {}),
         request<{
           sessions: Array<{
-            sessionKey: string;
+            key: string;
             name?: string;
+            label?: string;
             model?: string;
             agentId?: string;
             inputTokens?: number;
@@ -246,8 +248,8 @@ export const useUsageStore = create<UsageState>((set) => ({
 
       const sessionUsage: SessionUsageEntry[] = sessions
         .map((s) => ({
-          sessionKey: s.sessionKey,
-          name: s.name ?? s.sessionKey,
+          sessionKey: s.key,
+          name: s.name ?? s.label ?? s.key,
           model: s.model ?? 'unknown',
           agentId: s.agentId ?? '',
           inputTokens: s.inputTokens ?? 0,
