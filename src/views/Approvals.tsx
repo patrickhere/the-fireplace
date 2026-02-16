@@ -7,8 +7,10 @@ import { useApprovalsStore } from '@/stores/approvals';
 import { useConnectionStore } from '@/stores/connection';
 import type {
   ExecApprovalRequest,
-  ExecApprovalPattern,
   ExecApprovalsFile,
+  ExecApprovalsDefaults,
+  ExecApprovalsAgent,
+  ExecApprovalsAllowlistEntry,
 } from '@/stores/approvals';
 
 // ---- Time Formatting Helper -----------------------------------------------
@@ -135,17 +137,26 @@ function ApprovalCard({
   );
 }
 
-// ---- Pattern Row ----------------------------------------------------------
+// ---- Allowlist Entry Row --------------------------------------------------
 
-function PatternRow({ pattern, onRemove }: { pattern: ExecApprovalPattern; onRemove: () => void }) {
+function AllowlistEntryRow({
+  entry,
+  onRemove,
+}: {
+  entry: ExecApprovalsAllowlistEntry;
+  onRemove: () => void;
+}) {
   return (
     <div className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2">
-      <div className={`h-2 w-2 rounded-full ${pattern.allow ? 'bg-emerald-500' : 'bg-red-500'}`} />
-      <code className="flex-1 font-mono text-sm text-zinc-200">{pattern.pattern}</code>
-      <span className="text-xs text-zinc-500">{pattern.allow ? 'allow' : 'deny'}</span>
-      {pattern.note && (
-        <span className="text-xs text-zinc-600" title={pattern.note}>
-          ({pattern.note})
+      <code className="flex-1 font-mono text-sm text-zinc-200">{entry.pattern}</code>
+      {entry.lastUsedAt && (
+        <span className="text-xs text-zinc-500" title={new Date(entry.lastUsedAt).toLocaleString()}>
+          used {formatTimeAgo(entry.lastUsedAt)}
+        </span>
+      )}
+      {entry.lastUsedCommand && (
+        <span className="max-w-xs truncate text-xs text-zinc-600" title={entry.lastUsedCommand}>
+          "{entry.lastUsedCommand}"
         </span>
       )}
       <button
@@ -159,28 +170,19 @@ function PatternRow({ pattern, onRemove }: { pattern: ExecApprovalPattern; onRem
   );
 }
 
-// ---- Add Pattern Form -----------------------------------------------------
+// ---- Add Allowlist Entry Form ---------------------------------------------
 
-function AddPatternForm({ onAdd }: { onAdd: (pattern: ExecApprovalPattern) => void }) {
+function AddAllowlistEntryForm({ onAdd }: { onAdd: (pattern: string) => void }) {
   const [patternInput, setPatternInput] = useState('');
-  const [allow, setAllow] = useState(true);
-  const [note, setNote] = useState('');
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
       if (!patternInput.trim()) return;
-
-      onAdd({
-        pattern: patternInput.trim(),
-        allow,
-        note: note.trim() || undefined,
-      });
-
+      onAdd(patternInput.trim());
       setPatternInput('');
-      setNote('');
     },
-    [patternInput, allow, note, onAdd]
+    [patternInput, onAdd]
   );
 
   return (
@@ -191,29 +193,8 @@ function AddPatternForm({ onAdd }: { onAdd: (pattern: ExecApprovalPattern) => vo
           type="text"
           value={patternInput}
           onChange={(e) => setPatternInput(e.target.value)}
-          placeholder="e.g. ls *, cat *"
+          placeholder="e.g. ls *, cat *, git status"
           className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
-        />
-      </div>
-      <div>
-        <label className="mb-1 block text-xs text-zinc-500">Action</label>
-        <select
-          value={allow ? 'allow' : 'deny'}
-          onChange={(e) => setAllow(e.target.value === 'allow')}
-          className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
-        >
-          <option value="allow">Allow</option>
-          <option value="deny">Deny</option>
-        </select>
-      </div>
-      <div className="w-36">
-        <label className="mb-1 block text-xs text-zinc-500">Note</label>
-        <input
-          type="text"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Optional"
-          className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
         />
       </div>
       <button
@@ -227,49 +208,140 @@ function AddPatternForm({ onAdd }: { onAdd: (pattern: ExecApprovalPattern) => vo
   );
 }
 
-// ---- Allowlist Section ----------------------------------------------------
+// ---- Config Section -------------------------------------------------------
 
-function AllowlistSection({
+function ConfigSection({
   title,
-  patterns,
+  config,
   onUpdate,
 }: {
   title: string;
-  patterns: ExecApprovalPattern[];
-  onUpdate: (patterns: ExecApprovalPattern[]) => void;
+  config: ExecApprovalsDefaults | ExecApprovalsAgent;
+  onUpdate: (updated: ExecApprovalsDefaults | ExecApprovalsAgent) => void;
 }) {
-  const handleRemove = useCallback(
-    (index: number) => {
-      const updated = patterns.filter((_, i) => i !== index);
-      onUpdate(updated);
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-zinc-300">{title}</h3>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-zinc-500">Security Level</label>
+          <select
+            value={config.security ?? ''}
+            onChange={(e) => onUpdate({ ...config, security: e.target.value || undefined })}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+          >
+            <option value="">Default</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1 flex items-center gap-2 text-xs text-zinc-500">
+            <input
+              type="checkbox"
+              checked={config.autoAllowSkills ?? false}
+              onChange={(e) =>
+                onUpdate({ ...config, autoAllowSkills: e.target.checked || undefined })
+              }
+              className="rounded border-zinc-700 bg-zinc-800 text-amber-500 focus:ring-amber-500"
+            />
+            Auto-allow skills
+          </label>
+          <p className="mt-1 text-xs text-zinc-600">
+            Automatically approve commands from skill invocations
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs text-zinc-500">Ask Prompt</label>
+        <input
+          type="text"
+          value={config.ask ?? ''}
+          onChange={(e) => onUpdate({ ...config, ask: e.target.value || undefined })}
+          placeholder="Custom prompt to show in approval requests"
+          className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs text-zinc-500">Ask Fallback</label>
+        <input
+          type="text"
+          value={config.askFallback ?? ''}
+          onChange={(e) => onUpdate({ ...config, askFallback: e.target.value || undefined })}
+          placeholder="Fallback prompt if main ask is not set"
+          className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---- Agent Override Section -----------------------------------------------
+
+function AgentOverrideSection({
+  agentId,
+  config,
+  onUpdate,
+  onDelete,
+}: {
+  agentId: string;
+  config: ExecApprovalsAgent;
+  onUpdate: (updated: ExecApprovalsAgent) => void;
+  onDelete: () => void;
+}) {
+  const handleAddAllowlistEntry = useCallback(
+    (pattern: string) => {
+      const allowlist = config.allowlist ?? [];
+      onUpdate({ ...config, allowlist: [...allowlist, { pattern }] });
     },
-    [patterns, onUpdate]
+    [config, onUpdate]
   );
 
-  const handleAdd = useCallback(
-    (pattern: ExecApprovalPattern) => {
-      onUpdate([...patterns, pattern]);
+  const handleRemoveAllowlistEntry = useCallback(
+    (index: number) => {
+      const allowlist = config.allowlist ?? [];
+      onUpdate({ ...config, allowlist: allowlist.filter((_, i) => i !== index) });
     },
-    [patterns, onUpdate]
+    [config, onUpdate]
   );
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-medium text-zinc-300">{title}</h3>
-      {patterns.length === 0 ? (
-        <p className="text-xs text-zinc-600">No patterns configured.</p>
-      ) : (
-        <div className="space-y-1">
-          {patterns.map((pattern, index) => (
-            <PatternRow
-              key={`${pattern.pattern}-${index}`}
-              pattern={pattern}
-              onRemove={() => handleRemove(index)}
-            />
-          ))}
-        </div>
-      )}
-      <AddPatternForm onAdd={handleAdd} />
+    <div className="space-y-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+      <div className="flex items-center justify-between">
+        <h4 className="font-mono text-sm font-medium text-amber-400">Agent: {agentId}</h4>
+        <button
+          onClick={onDelete}
+          className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-500/10"
+          type="button"
+        >
+          Delete Override
+        </button>
+      </div>
+
+      <ConfigSection title="Agent Settings" config={config} onUpdate={onUpdate} />
+
+      <div className="space-y-2 border-t border-zinc-800 pt-4">
+        <h5 className="text-sm font-medium text-zinc-300">Allowlist</h5>
+        {config.allowlist && config.allowlist.length > 0 ? (
+          <div className="space-y-1">
+            {config.allowlist.map((entry, index) => (
+              <AllowlistEntryRow
+                key={entry.id ?? `${entry.pattern}-${index}`}
+                entry={entry}
+                onRemove={() => handleRemoveAllowlistEntry(index)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-600">No allowlist entries configured.</p>
+        )}
+        <AddAllowlistEntryForm onAdd={handleAddAllowlistEntry} />
+      </div>
     </div>
   );
 }
@@ -330,22 +402,29 @@ export function Approvals() {
   );
 
   const handleUpdateDefaults = useCallback(
-    (patterns: ExecApprovalPattern[]) => {
+    (defaults: ExecApprovalsDefaults) => {
       if (!localFile) return;
-      setLocalFile({ ...localFile, defaults: patterns });
+      setLocalFile({ ...localFile, defaults });
       setIsDirty(true);
     },
     [localFile]
   );
 
-  const handleUpdateAgentPatterns = useCallback(
-    (agentId: string, patterns: ExecApprovalPattern[]) => {
+  const handleUpdateAgent = useCallback(
+    (agentId: string, agentConfig: ExecApprovalsAgent) => {
       if (!localFile) return;
-      const agents = { ...localFile.agents, [agentId]: patterns };
-      // Remove agent key if patterns are empty
-      if (patterns.length === 0) {
-        delete agents[agentId];
-      }
+      const agents = { ...localFile.agents, [agentId]: agentConfig };
+      setLocalFile({ ...localFile, agents });
+      setIsDirty(true);
+    },
+    [localFile]
+  );
+
+  const handleDeleteAgent = useCallback(
+    (agentId: string) => {
+      if (!localFile || !localFile.agents) return;
+      const agents = { ...localFile.agents };
+      delete agents[agentId];
       setLocalFile({ ...localFile, agents });
       setIsDirty(true);
     },
@@ -356,10 +435,11 @@ export function Approvals() {
 
   const handleAddAgent = useCallback(() => {
     if (!localFile || !newAgentId.trim()) return;
-    if (localFile.agents[newAgentId.trim()]) return;
+    const agents = localFile.agents ?? {};
+    if (agents[newAgentId.trim()]) return;
     setLocalFile({
       ...localFile,
-      agents: { ...localFile.agents, [newAgentId.trim()]: [] },
+      agents: { ...agents, [newAgentId.trim()]: {} },
     });
     setNewAgentId('');
     setIsDirty(true);
@@ -368,10 +448,10 @@ export function Approvals() {
   const handleSave = useCallback(async () => {
     if (!localFile) return;
     setIsSaving(true);
-    await saveApprovals(localFile);
+    await saveApprovals(localFile, snapshot?.hash);
     setIsSaving(false);
     setIsDirty(false);
-  }, [localFile, saveApprovals]);
+  }, [localFile, snapshot?.hash, saveApprovals]);
 
   return (
     <div className="flex h-full flex-col">
@@ -405,7 +485,7 @@ export function Approvals() {
               className="rounded-md bg-amber-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-400 disabled:opacity-50"
               type="button"
             >
-              {isSaving ? 'Saving...' : 'Save Allowlist'}
+              {isSaving ? 'Saving...' : 'Save'}
             </button>
           )}
         </div>
@@ -451,18 +531,18 @@ export function Approvals() {
               )}
             </section>
 
-            {/* Allowlist Management Section */}
+            {/* Configuration Section */}
             <section>
               <h2 className="mb-3 text-sm font-semibold tracking-wider text-zinc-500 uppercase">
-                Allowlist Management
+                Configuration
               </h2>
 
               {!localFile ? (
                 <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 p-4 text-center">
                   <p className="text-sm text-zinc-500">
                     {snapshot?.exists === false
-                      ? 'No approvals file exists yet. Add patterns below to create one.'
-                      : 'Loading allowlist...'}
+                      ? 'No approvals file exists yet. Configure settings below to create one.'
+                      : 'Loading configuration...'}
                   </p>
                 </div>
               ) : (
@@ -482,22 +562,30 @@ export function Approvals() {
                     </div>
                   )}
 
-                  {/* Default Patterns */}
-                  <AllowlistSection
-                    title="Default Patterns (all agents)"
-                    patterns={localFile.defaults}
-                    onUpdate={handleUpdateDefaults}
-                  />
-
-                  {/* Per-Agent Overrides */}
-                  {Object.entries(localFile.agents).map(([agentId, patterns]) => (
-                    <AllowlistSection
-                      key={agentId}
-                      title={`Agent: ${agentId}`}
-                      patterns={patterns}
-                      onUpdate={(p) => handleUpdateAgentPatterns(agentId, p)}
+                  {/* Default Settings */}
+                  <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+                    <ConfigSection
+                      title="Default Settings (all agents)"
+                      config={localFile.defaults ?? {}}
+                      onUpdate={handleUpdateDefaults}
                     />
-                  ))}
+                  </div>
+
+                  {/* Agent Overrides */}
+                  {localFile.agents && Object.entries(localFile.agents).length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-medium text-zinc-300">Agent Overrides</h3>
+                      {Object.entries(localFile.agents).map(([agentId, agentConfig]) => (
+                        <AgentOverrideSection
+                          key={agentId}
+                          agentId={agentId}
+                          config={agentConfig}
+                          onUpdate={(updated) => handleUpdateAgent(agentId, updated)}
+                          onDelete={() => handleDeleteAgent(agentId)}
+                        />
+                      ))}
+                    </div>
+                  )}
 
                   {/* Add Agent Override */}
                   <div className="flex items-end gap-2 border-t border-zinc-800 pt-3">

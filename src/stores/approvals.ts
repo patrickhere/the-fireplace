@@ -22,21 +22,37 @@ export interface ExecApprovalRequest {
   receivedAt: number;
 }
 
-export interface ExecApprovalPattern {
+export interface ExecApprovalsAllowlistEntry {
+  id?: string;
   pattern: string;
-  allow: boolean;
-  note?: string;
+  lastUsedAt?: number;
+  lastUsedCommand?: string;
+  lastResolvedPath?: string;
 }
 
-export interface ExecApprovalsAgentOverride {
-  agentId: string;
-  patterns: ExecApprovalPattern[];
+export interface ExecApprovalsDefaults {
+  security?: string;
+  ask?: string;
+  askFallback?: string;
+  autoAllowSkills?: boolean;
+}
+
+export interface ExecApprovalsAgent {
+  security?: string;
+  ask?: string;
+  askFallback?: string;
+  autoAllowSkills?: boolean;
+  allowlist?: ExecApprovalsAllowlistEntry[];
 }
 
 export interface ExecApprovalsFile {
-  version: number;
-  defaults: ExecApprovalPattern[];
-  agents: Record<string, ExecApprovalPattern[]>;
+  version: 1;
+  socket?: {
+    path?: string;
+    token?: string;
+  };
+  defaults?: ExecApprovalsDefaults;
+  agents?: Record<string, ExecApprovalsAgent>;
 }
 
 export interface ExecApprovalsSnapshot {
