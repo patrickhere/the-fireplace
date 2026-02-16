@@ -308,8 +308,9 @@ config["models"]["providers"]["copilot-free"] = {
 }
 
 # Add copilot-cheap provider (0.33x models — ~900 calls/mo on Pro)
+# baseUrl must include /v1 — OpenClaw appends "messages" to get /v1/messages
 config["models"]["providers"]["copilot-cheap"] = {
-    "baseUrl": "http://127.0.0.1:4141",
+    "baseUrl": "http://127.0.0.1:4141/v1",
     "apiKey": "dummy",
     "api": "anthropic-messages",
     "models": [
@@ -326,8 +327,9 @@ config["models"]["providers"]["copilot-cheap"] = {
 }
 
 # Add copilot-premium provider (1x+ models — use sparingly, 300/mo budget)
+# baseUrl must include /v1 — OpenClaw appends "messages" to get /v1/messages
 config["models"]["providers"]["copilot-premium"] = {
-    "baseUrl": "http://127.0.0.1:4141",
+    "baseUrl": "http://127.0.0.1:4141/v1",
     "apiKey": "dummy",
     "api": "anthropic-messages",
     "models": [

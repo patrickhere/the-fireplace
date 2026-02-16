@@ -497,7 +497,7 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
       },
       // CHEAP tier (0.33x, ~900 calls/mo on 300 budget)
       "copilot-cheap": {
-        baseUrl: "http://127.0.0.1:4141",
+        baseUrl: "http://127.0.0.1:4141/v1",  // /v1 required — OpenClaw appends "messages"
         apiKey: "dummy",
         api: "anthropic-messages",
         models: [
@@ -506,7 +506,7 @@ Edit `~/.openclaw/openclaw.json` on Mac Mini:
       },
       // PREMIUM tier (1x-3x, use sparingly)
       "copilot-premium": {
-        baseUrl: "http://127.0.0.1:4141",
+        baseUrl: "http://127.0.0.1:4141/v1",  // /v1 required — OpenClaw appends "messages"
         apiKey: "dummy",
         api: "anthropic-messages",
         models: [
