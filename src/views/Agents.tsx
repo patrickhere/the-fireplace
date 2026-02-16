@@ -170,7 +170,8 @@ function CreateAgentModal() {
 
   const handleCreate = async () => {
     if (!name || !workspace) return;
-    await createAgent(name, workspace, emoji || undefined);
+    const success = await createAgent(name, workspace, emoji || undefined);
+    if (!success) return;
 
     // If a template was selected, write the soul file
     if (selectedTemplate) {

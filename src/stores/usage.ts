@@ -120,14 +120,13 @@ interface UsageState {
   // Actions
   loadUsage: () => Promise<void>;
   loadSessionUsage: () => Promise<void>;
-  loadDemonUsage: () => void;
   loadAll: () => Promise<void>;
   reset: () => void;
 }
 
 // ---- Store ----------------------------------------------------------------
 
-export const useUsageStore = create<UsageState>((set, get) => ({
+export const useUsageStore = create<UsageState>((set) => ({
   usage: null,
   sessionUsage: [],
   demonUsage: [],
@@ -209,17 +208,6 @@ export const useUsageStore = create<UsageState>((set, get) => ({
       set({ error: errorMessage, isLoading: false });
       console.error('[Usage] Failed to load session usage:', err);
     }
-  },
-
-  loadDemonUsage: () => {
-    const { sessionUsage } = get();
-    // Dynamically import agents store to get agent metadata
-    import('./agents').then(({ useAgentsStore }) => {
-      const { agents } = useAgentsStore.getState();
-      const demonUsage = buildDemonUsage(sessionUsage, agents);
-      const modelDistribution = buildModelDistribution(sessionUsage);
-      set({ demonUsage, modelDistribution });
-    });
   },
 
   loadAll: async () => {

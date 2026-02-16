@@ -180,7 +180,12 @@ function SessionConfigModal() {
             <select
               id="send-policy"
               value={config.sendPolicy || ''}
-              onChange={(e) => setConfig({ ...config, sendPolicy: e.target.value as any })}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  sendPolicy: (e.target.value || null) as 'allow' | 'deny' | null,
+                })
+              }
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
             >
               <option value="">Default</option>

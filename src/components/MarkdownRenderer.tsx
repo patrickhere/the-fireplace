@@ -6,7 +6,6 @@ import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import rehypeRaw from 'rehype-raw';
 import type { Components } from 'react-markdown';
 
 // Import highlight.js CSS theme
@@ -219,7 +218,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
     <div className={`markdown-content ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight, rehypeRaw]}
+        rehypePlugins={[rehypeHighlight]}
         components={components}
       >
         {content}

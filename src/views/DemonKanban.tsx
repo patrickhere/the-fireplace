@@ -159,9 +159,13 @@ export function DemonKanban() {
   useEffect(() => {
     if (status === 'connected') {
       startTracking();
+      // Start health monitoring if not already active (shared global store — other views may also use it)
+      const { startMonitoring, isMonitoring } = useDemonHealthStore.getState();
+      if (!isMonitoring) startMonitoring();
     }
     return () => {
       stopTracking();
+      // Note: health monitoring is intentionally NOT stopped here — it's a shared global resource
     };
   }, [status, startTracking, stopTracking]);
 

@@ -238,6 +238,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sessionKey: activeSessionKey,
         message: content,
         config: sessionConfig,
+        idempotencyKey: crypto.randomUUID(),
       });
 
       // Mark as streaming (assistant response will arrive via events)
@@ -262,7 +263,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { request } = useConnectionStore.getState();
 
     try {
-      await request('chat.abort', { sessionKey: activeSessionKey });
+      await request('chat.abort', {
+        sessionKey: activeSessionKey,
+        idempotencyKey: crypto.randomUUID(),
+      });
       set({
         isStreaming: false,
         streamingMessageId: null,
@@ -290,6 +294,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await request('chat.inject', {
         sessionKey: activeSessionKey,
         content: [{ type: 'text', text }],
+        idempotencyKey: crypto.randomUUID(),
       });
 
       // Add assistant note to local state

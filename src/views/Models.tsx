@@ -10,17 +10,18 @@ import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
 import type { ModelChoice } from '@/stores/models';
 import type { Agent } from '@/stores/agents';
 
-// ---- Known demon model assignments (from OpenClaw config) -----------------
+// ---- Derive demon model assignments from agents store --------------------
 
-const DEMON_MODEL_ASSIGNMENTS: Record<string, string> = {
-  calcifer: 'anthropic/claude-sonnet-4-5',
-  buer: 'copilot-free/gpt-4.1',
-  paimon: 'google/gemini-2.5-flash',
-  alloces: 'copilot-free/gpt-4.1',
-  dantalion: 'copilot-free/gpt-5-mini',
-  andromalius: 'copilot-free/gpt-4.1',
-  malphas: 'copilot-free/gpt-4.1',
-};
+/** Derive demon model assignments from agents store (live data). */
+function getDemonModelAssignments(agents: Agent[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const agent of agents) {
+    if (agent.model?.primary) {
+      map[agent.id] = agent.model.primary;
+    }
+  }
+  return map;
+}
 
 // ---- Context Window Formatter ---------------------------------------------
 
@@ -35,8 +36,9 @@ function formatContextWindow(tokens?: number): string {
 
 function buildModelDemonMap(agents: Agent[]): Record<string, Agent[]> {
   const map: Record<string, Agent[]> = {};
+  const assignments = getDemonModelAssignments(agents);
   for (const agent of agents) {
-    const primaryModel = DEMON_MODEL_ASSIGNMENTS[agent.id];
+    const primaryModel = assignments[agent.id];
     if (!primaryModel) continue;
     if (!map[primaryModel]) {
       map[primaryModel] = [];

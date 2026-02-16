@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
 import type { ChatEventPayload } from '@/stores/chat';
+import type { Agent } from '@/stores/agents';
 
 // ---- Types ----------------------------------------------------------------
 
@@ -46,6 +47,19 @@ const MAX_MESSAGES = 500;
 
 function generateId(): string {
   return `dcm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/** Match an agent from a sessionKey (which is often prefixed with agentId). */
+function matchAgentFromSessionKey(sessionKey: string, agents: Agent[]): Agent | undefined {
+  // Direct prefix match on agent id
+  let match = agents.find((a) => sessionKey.startsWith(a.id));
+  if (match) return match;
+
+  // Fallback: check if any agent name appears in session key
+  match = agents.find(
+    (a) => a.identity?.name && sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
+  );
+  return match;
 }
 
 /** Detect delegation patterns in message content. */
@@ -97,43 +111,76 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       const { useAgentsStore } = await import('./agents');
       const { subscribe } = useConnectionStore.getState();
 
-      const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
-        // We only care about events that have content (deltas with done=true or full messages)
-        if (!payload.done && !payload.delta) return;
+      // Fresh Map on each startListening call prevents stale buffers on reconnect
+      const streamBuffers = new Map<string, string>();
+      // Track which sessionKeys have an active stream without messageId,
+      // so concurrent anonymous streams get unique buffer keys
+      let anonStreamCounter = 0;
+      const activeAnonKeys = new Map<string, string>(); // sessionKey → bufferKey
 
-        // Only process completed messages (done=true) to avoid partial duplicates
-        if (!payload.done) return;
+      const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
+        // ChatEventPayload has: sessionKey, messageId, delta, seq, done, error
+        // It does NOT have role/content/agentId — we infer agent from sessionKey
+        if (!payload.delta && !payload.done && !payload.error) return;
 
         const agents = useAgentsStore.getState().agents;
-
-        // Try to match agentId from the payload — chat events include sessionKey
-        // which is often prefixed with the agentId
         const sessionKey = payload.sessionKey;
-        let matchedAgent = agents.find((a) => sessionKey.startsWith(a.id));
 
-        // Fallback: check if any agent name appears in session key
-        if (!matchedAgent) {
-          matchedAgent = agents.find(
-            (a) =>
-              a.identity?.name && sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
-          );
+        const matchedAgent = matchAgentFromSessionKey(sessionKey, agents);
+        if (!matchedAgent) return;
+
+        // Clear buffer on error to prevent stale data contaminating later streams
+        if (payload.error) {
+          if (payload.messageId) {
+            streamBuffers.delete(payload.messageId);
+          } else {
+            const anonKey = activeAnonKeys.get(sessionKey);
+            if (anonKey) {
+              streamBuffers.delete(anonKey);
+              activeAnonKeys.delete(sessionKey);
+            }
+          }
+          return;
         }
 
-        // If we can't identify a demon, skip (it's not a demon session)
-        if (!matchedAgent) return;
+        // Stable buffer key: messageId when present, otherwise a per-session counter key
+        let bufferKey: string;
+        if (payload.messageId) {
+          bufferKey = payload.messageId;
+        } else {
+          // For streams without messageId, assign a unique key per active stream
+          let existing = activeAnonKeys.get(sessionKey);
+          if (!existing || payload.done) {
+            anonStreamCounter += 1;
+            existing = `${sessionKey}:anon:${anonStreamCounter}`;
+            activeAnonKeys.set(sessionKey, existing);
+          }
+          bufferKey = existing;
+        }
+
+        // Accumulate deltas into buffer
+        if (payload.delta) {
+          const prev = streamBuffers.get(bufferKey) ?? '';
+          streamBuffers.set(bufferKey, prev + payload.delta);
+        }
+
+        // Only emit a complete message when done=true
+        if (!payload.done) return;
+
+        const content = streamBuffers.get(bufferKey) ?? '';
+        streamBuffers.delete(bufferKey);
+        activeAnonKeys.delete(sessionKey);
+        if (!content) return;
+
+        const msgId = payload.messageId ?? generateId();
 
         const demonId = matchedAgent.id;
         const demonName = matchedAgent.identity?.name ?? matchedAgent.id;
         const demonEmoji = matchedAgent.identity?.emoji ?? '';
-
-        // Build content from the delta or reconstruct
-        const content = payload.delta ?? '';
-        if (!content) return;
-
         const { isDelegation, targetDemonId } = detectDelegation(content, agents);
 
         const msg: DemonChatMessage = {
-          id: payload.messageId ?? generateId(),
+          id: msgId,
           demonId,
           demonName,
           demonEmoji,
@@ -148,7 +195,6 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
 
         set((state) => {
           const newMessages = [...state.messages, msg];
-          // Cap at MAX_MESSAGES — drop oldest
           if (newMessages.length > MAX_MESSAGES) {
             return { messages: newMessages.slice(newMessages.length - MAX_MESSAGES) };
           }
@@ -156,7 +202,9 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
         });
       });
 
-      set({ _unsubscribe: unsub, isListening: true });
+      // Only mark as listening if we got a real subscription (not noop)
+      const { status } = useConnectionStore.getState();
+      set({ _unsubscribe: unsub, isListening: status === 'connected' });
     })();
   },
 
@@ -200,7 +248,8 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
 
     await request('chat.send', {
       sessionKey: demonSession.key,
-      message: [{ type: 'text', text: message }],
+      message,
+      idempotencyKey: crypto.randomUUID(),
     });
   },
 

@@ -112,7 +112,7 @@ function statusColor(status: string | undefined): string {
     case 'skipped':
       return 'bg-amber-500';
     case 'running':
-      return 'bg-blue-500 animate-pulse';
+      return 'bg-amber-500 animate-pulse';
     default:
       return 'bg-zinc-500';
   }
@@ -546,7 +546,7 @@ function JobRow({ job, agents }: { job: CronJob; agents: Agent[] }) {
         {/* Next Run */}
         <td className="py-2.5 pr-3 text-xs text-zinc-400">
           {job.state.runningAtMs ? (
-            <span className="text-blue-400">Running...</span>
+            <span className="text-amber-400">Running...</span>
           ) : (
             formatRelativeTime(job.state.nextRunAtMs)
           )}

@@ -74,7 +74,7 @@ interface AgentsState {
   // Actions
   loadAgents: () => Promise<void>;
   selectAgent: (agentId: string) => void;
-  createAgent: (name: string, workspace: string, emoji?: string) => Promise<void>;
+  createAgent: (name: string, workspace: string, emoji?: string) => Promise<boolean>;
   updateAgent: (agentId: string, updates: Partial<Agent>) => Promise<void>;
   deleteAgent: (agentId: string, deleteFiles: boolean) => Promise<void>;
   loadAgentFiles: (agentId: string) => Promise<void>;
@@ -164,10 +164,12 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       // Reload agents
       get().loadAgents();
       set({ showCreateModal: false });
+      return true;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create agent';
       set({ error: errorMessage });
       console.error('[Agents] Failed to create agent:', err);
+      return false;
     }
   },
 

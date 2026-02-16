@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
+import type { ChatEventPayload } from '@/stores/chat';
 
 // ---- Types ----------------------------------------------------------------
 
@@ -81,103 +82,28 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
         };
       };
 
-      const chatUnsub = subscribe<{
-        event?: string;
-        sessionKey?: string;
-        agentId?: string;
-        role?: string;
-        content?: string;
-        model?: string;
-        done?: boolean;
-        error?: string;
-        spawnedBy?: string;
-      }>('chat', (payload) => {
+      // Track streaming sessions to detect new tasks
+      const streamingSessions = new Set<string>();
+
+      const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
         const { tasks } = get();
-        const agentId = payload.agentId;
-        if (!agentId) return;
+        const { agents } = useAgentsStore.getState();
 
-        // Detect delegation: a user message in a demon's session that was spawned by another demon
-        if (payload.role === 'user' && payload.spawnedBy && payload.content) {
-          const assignedInfo = getAgentInfo(agentId);
-          const delegatorInfo = getAgentInfo(payload.spawnedBy);
+        // Match agent from sessionKey
+        const matchedAgent =
+          agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+          agents.find(
+            (a) =>
+              a.identity?.name &&
+              payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
+          );
+        if (!matchedAgent) return;
+        const agentId = matchedAgent.id;
 
-          const newTask: DemonTask = {
-            id: generateTaskId(),
-            description:
-              payload.content.length > 200 ? payload.content.slice(0, 200) + '…' : payload.content,
-            status: 'queued',
-            assignedTo: agentId,
-            assignedToEmoji: assignedInfo.emoji,
-            assignedToName: assignedInfo.name,
-            delegatedBy: payload.spawnedBy,
-            delegatedByEmoji: delegatorInfo.emoji,
-            delegatedByName: delegatorInfo.name,
-            sessionKey: payload.sessionKey ?? '',
-            model: payload.model ?? '',
-            cliBackend: null,
-            createdAt: Date.now(),
-            startedAt: null,
-            completedAt: null,
-            error: null,
-          };
-
-          // Limit to MAX_TASKS, drop oldest done/failed
-          const trimmed = [...tasks, newTask];
-          if (trimmed.length > MAX_TASKS) {
-            const doneIdx = trimmed.findIndex((t) => t.status === 'done' || t.status === 'failed');
-            if (doneIdx !== -1) {
-              trimmed.splice(doneIdx, 1);
-            } else {
-              trimmed.shift();
-            }
-          }
-
-          set({ tasks: trimmed });
-          return;
-        }
-
-        // Detect assistant response starting = in_progress
-        if (payload.role === 'assistant' && payload.content) {
-          const sessionKey = payload.sessionKey ?? '';
-          const updated = tasks.map((t) => {
-            if (t.assignedTo === agentId && t.sessionKey === sessionKey && t.status === 'queued') {
-              return {
-                ...t,
-                status: 'in_progress' as const,
-                startedAt: Date.now(),
-                model: payload.model ?? t.model,
-              };
-            }
-            return t;
-          });
-          set({ tasks: updated });
-          return;
-        }
-
-        // Detect done = mark task complete
-        if (payload.done) {
-          const sessionKey = payload.sessionKey ?? '';
-          const updated = tasks.map((t) => {
-            if (
-              t.assignedTo === agentId &&
-              t.sessionKey === sessionKey &&
-              t.status === 'in_progress'
-            ) {
-              return {
-                ...t,
-                status: 'done' as const,
-                completedAt: Date.now(),
-              };
-            }
-            return t;
-          });
-          set({ tasks: updated });
-          return;
-        }
-
-        // Detect error
+        // Handle errors
         if (payload.error) {
-          const sessionKey = payload.sessionKey ?? '';
+          const sessionKey = payload.sessionKey;
+          streamingSessions.delete(sessionKey);
           const updated = tasks.map((t) => {
             if (
               t.assignedTo === agentId &&
@@ -188,12 +114,76 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
                 ...t,
                 status: 'failed' as const,
                 completedAt: Date.now(),
-                error: payload.error ?? 'Unknown error',
+                error: payload.error?.message ?? 'Unknown error',
               };
             }
             return t;
           });
           set({ tasks: updated });
+          return;
+        }
+
+        // Handle done
+        if (payload.done) {
+          const sessionKey = payload.sessionKey;
+          streamingSessions.delete(sessionKey);
+          const updated = tasks.map((t) => {
+            if (
+              t.assignedTo === agentId &&
+              t.sessionKey === sessionKey &&
+              t.status === 'in_progress'
+            ) {
+              return { ...t, status: 'done' as const, completedAt: Date.now() };
+            }
+            return t;
+          });
+          set({ tasks: updated });
+          return;
+        }
+
+        // Handle delta — first delta for a session creates a task, subsequent ones mark in_progress
+        if (payload.delta) {
+          const sessionKey = payload.sessionKey;
+
+          if (!streamingSessions.has(sessionKey)) {
+            streamingSessions.add(sessionKey);
+
+            // Check if we already have a task for this session
+            const existing = tasks.find(
+              (t) => t.assignedTo === agentId && t.sessionKey === sessionKey
+            );
+            if (!existing) {
+              const info = getAgentInfo(agentId);
+              const newTask: DemonTask = {
+                id: generateTaskId(),
+                description: `Session ${sessionKey}`,
+                status: 'in_progress',
+                assignedTo: agentId,
+                assignedToEmoji: info.emoji,
+                assignedToName: info.name,
+                delegatedBy: '',
+                delegatedByEmoji: '',
+                delegatedByName: '',
+                sessionKey,
+                model: '',
+                cliBackend: null,
+                createdAt: Date.now(),
+                startedAt: Date.now(),
+                completedAt: null,
+                error: null,
+              };
+
+              const trimmed = [...tasks, newTask];
+              if (trimmed.length > MAX_TASKS) {
+                const doneIdx = trimmed.findIndex(
+                  (t) => t.status === 'done' || t.status === 'failed'
+                );
+                if (doneIdx !== -1) trimmed.splice(doneIdx, 1);
+                else trimmed.shift();
+              }
+              set({ tasks: trimmed });
+            }
+          }
         }
       });
 

@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
 import type { Agent } from '@/stores/agents';
 import type { SessionListItem } from '@/stores/sessions';
+import type { ChatEventPayload } from '@/stores/chat';
 
 // ---- Types ----------------------------------------------------------------
 
@@ -33,8 +34,8 @@ interface DemonHealthState {
   // Internal refs (not serializable)
   _chatUnsub: Unsubscribe | null;
   _execUnsub: Unsubscribe | null;
-  _refreshInterval: ReturnType<typeof setInterval> | null;
   _idleCheckInterval: ReturnType<typeof setInterval> | null;
+  _execTimeouts: ReturnType<typeof setTimeout>[];
 
   // Actions
   startMonitoring: () => void;
@@ -70,8 +71,8 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   isMonitoring: false,
   _chatUnsub: null,
   _execUnsub: null,
-  _refreshInterval: null,
   _idleCheckInterval: null,
+  _execTimeouts: [],
 
   startMonitoring: () => {
     const { isMonitoring } = get();
@@ -98,45 +99,38 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
       }
 
       // Subscribe to chat events to detect working/idle state
-      const chatUnsub = subscribe<{
-        event?: string;
-        sessionKey?: string;
-        agentId?: string;
-        role?: string;
-        content?: string;
-        model?: string;
-        done?: boolean;
-      }>('chat', (payload) => {
+      const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
         const { demons } = get();
-        const agentId = payload.agentId;
+
+        // Match agent from sessionKey
+        const { agents } = useAgentsStore.getState();
+        const matchedAgent =
+          agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+          agents.find(
+            (a) =>
+              a.identity?.name &&
+              payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
+          );
+        const agentId = matchedAgent?.id;
         if (!agentId) return;
 
         const prev = demons.find((d) => d.demonId === agentId);
         if (!prev) return;
 
-        let currentTask = prev.currentTask;
-        if (payload.role === 'user' && payload.content) {
-          currentTask =
-            payload.content.length > 120 ? payload.content.slice(0, 120) + '…' : payload.content;
-        }
-
         let state: DemonStatus['state'] = 'working';
+        let currentTask = prev.currentTask;
+
         if (payload.done) {
           state = 'idle';
           currentTask = null;
+        } else if (payload.delta) {
+          // First delta of a new message = working
+          state = 'working';
         }
 
         set({
           demons: demons.map((d) =>
-            d.demonId === agentId
-              ? {
-                  ...d,
-                  lastActivity: Date.now(),
-                  state,
-                  currentTask,
-                  activeModel: payload.model ?? d.activeModel,
-                }
-              : d
+            d.demonId === agentId ? { ...d, lastActivity: Date.now(), state, currentTask } : d
           ),
         });
       });
@@ -145,9 +139,7 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
       const execUnsub = subscribe<{
         agentId?: string;
         command?: string;
-        status?: string;
-        startedAt?: number;
-      }>('exec.approval', (payload) => {
+      }>('exec.approval.requested', (payload) => {
         const { demons } = get();
         const agentId = payload.agentId;
         if (!agentId) return;
@@ -159,20 +151,44 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
         const isCodex = cmd.startsWith('codex');
         if (!isClaude && !isCodex) return;
 
-        const cliBackend: DemonStatus['cliBackend'] =
-          payload.status === 'completed' || payload.status === 'denied'
-            ? { active: false, tool: null, startedAt: null }
-            : {
-                active: true,
-                tool: isClaude ? 'claude-code' : 'codex',
-                startedAt: payload.startedAt ?? Date.now(),
-              };
-
+        // Mark CLI backend as active
         set({
           demons: demons.map((d) =>
-            d.demonId === agentId ? { ...d, cliBackend, lastActivity: Date.now() } : d
+            d.demonId === agentId
+              ? {
+                  ...d,
+                  cliBackend: {
+                    active: true,
+                    tool: isClaude ? 'claude-code' : 'codex',
+                    startedAt: Date.now(),
+                  },
+                  lastActivity: Date.now(),
+                }
+              : d
           ),
         });
+
+        // Auto-clear after 10 minutes (no completion event available)
+        const timeoutId = setTimeout(
+          () => {
+            const { demons: current } = get();
+            const demon = current.find((d) => d.demonId === agentId);
+            if (demon?.cliBackend.active && demon.cliBackend.startedAt) {
+              const elapsed = Date.now() - demon.cliBackend.startedAt;
+              if (elapsed >= 10 * 60 * 1000) {
+                set({
+                  demons: current.map((d) =>
+                    d.demonId === agentId
+                      ? { ...d, cliBackend: { active: false, tool: null, startedAt: null } }
+                      : d
+                  ),
+                });
+              }
+            }
+          },
+          10 * 60 * 1000
+        );
+        set((state) => ({ _execTimeouts: [...state._execTimeouts, timeoutId] }));
       });
 
       // Periodic idle check — mark demons as idle if no activity for 5 min
@@ -203,17 +219,17 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   },
 
   stopMonitoring: () => {
-    const { _chatUnsub, _execUnsub, _refreshInterval, _idleCheckInterval } = get();
+    const { _chatUnsub, _execUnsub, _idleCheckInterval, _execTimeouts } = get();
     _chatUnsub?.();
     _execUnsub?.();
-    if (_refreshInterval) clearInterval(_refreshInterval);
     if (_idleCheckInterval) clearInterval(_idleCheckInterval);
+    for (const t of _execTimeouts) clearTimeout(t);
     set({
       isMonitoring: false,
       _chatUnsub: null,
       _execUnsub: null,
-      _refreshInterval: null,
       _idleCheckInterval: null,
+      _execTimeouts: [],
     });
   },
 

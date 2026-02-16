@@ -12,12 +12,12 @@ import type { DemonChatMessage } from '@/stores/demonChat';
 
 const DEMON_COLORS = [
   'border-amber-500',
-  'border-emerald-500',
-  'border-sky-500',
-  'border-violet-500',
-  'border-rose-500',
-  'border-orange-500',
-  'border-teal-500',
+  'border-amber-400',
+  'border-zinc-400',
+  'border-amber-600',
+  'border-zinc-300',
+  'border-amber-300',
+  'border-zinc-500',
 ];
 
 function stableColorIndex(demonId: string): number {
