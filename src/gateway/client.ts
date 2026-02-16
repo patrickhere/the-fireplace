@@ -132,8 +132,6 @@ export class GatewayClient {
   private intentionalClose = false;
 
   // -- Tick / watchdog
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private _lastTickSentAt = 0;
   private _lastTickReceivedAt = 0;
 
   // -- Idempotency key tracking
@@ -330,8 +328,6 @@ export class GatewayClient {
     console.log('[Gateway] Disconnecting (intentional)');
     this.intentionalClose = true;
     this.cancelReconnectTimer();
-    this.stopTick();
-
     if (this.ws) {
       // Close with normal closure code
       this.ws.close(1000, 'Client disconnect');
@@ -763,9 +759,6 @@ export class GatewayClient {
     this.reconnect.attempts = 0;
     this.reconnect.nextDelayMs = this.config.reconnectMinMs;
 
-    // Start tick watchdog
-    this.startTick();
-
     // Mark connected
     this.setState('connected');
 
@@ -795,46 +788,6 @@ export class GatewayClient {
 
   // ---- Internals: Tick / Watchdog -----------------------------------------
 
-  /**
-   * Start the tick watchdog timer based on the server's policy.tickIntervalMs.
-   *
-   * Sends a lightweight `tick` request at the specified interval to keep the
-   * connection alive and signal liveness to the server.
-   */
-  private startTick(): void {
-    this.stopTick();
-    const intervalMs = this._serverPolicy?.tickIntervalMs;
-    if (!intervalMs || intervalMs <= 0) return;
-
-    this.tickTimer = setInterval(() => {
-      if (this._state === 'connected' && this.ws?.readyState === WebSocket.OPEN) {
-        this._lastTickSentAt = Date.now();
-        // Send tick as a fire-and-forget request. We do not register it as
-        // a pending request to avoid timeout noise on keepalive frames.
-        const frame = buildRequestFrame('tick');
-        try {
-          this.send(frame);
-        } catch (err) {
-          console.warn('[Gateway] Failed to send tick:', err);
-        }
-      }
-    }, intervalMs);
-
-    console.log(`[Gateway] Tick watchdog started: interval=${intervalMs}ms`);
-  }
-
-  private stopTick(): void {
-    if (this.tickTimer !== null) {
-      clearInterval(this.tickTimer);
-      this.tickTimer = null;
-    }
-  }
-
-  /** Timestamp (ms since epoch) of the last tick sent. */
-  get lastTickSentAt(): number {
-    return this._lastTickSentAt;
-  }
-
   /** Timestamp (ms since epoch) of the last tick event received from server. */
   get lastTickReceivedAt(): number {
     return this._lastTickReceivedAt;
@@ -854,7 +807,6 @@ export class GatewayClient {
 
   private handleClose(_event: CloseEvent): void {
     this.ws = null;
-    this.stopTick();
 
     // If we were still in the handshake phase, reject the connect() promise
     if (this.handshakeReject) {
@@ -962,7 +914,6 @@ export class GatewayClient {
     console.error('[Gateway] Aborting connection:', err.message);
     this.clearHandshake(err);
     this.rejectAllPending(err);
-    this.stopTick();
 
     if (this.ws) {
       this.ws.close(4000, err.message.slice(0, 120));

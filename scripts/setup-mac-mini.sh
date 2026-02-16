@@ -613,10 +613,18 @@ banner "Write Demon Soul Files"
 write_soul() {
   local id="$1"
   local content="$2"
-  local soul_dir="$HOME/.openclaw/agents/$id/agent"
-  local soul_file="$soul_dir/soul.md"
 
-  mkdir -p "$soul_dir"
+  # Gateway reads agent files from workspace dir, not agentDir
+  # Default agent (calcifer) uses ~/.openclaw/workspace, others use workspace-<id>
+  local workspace_dir
+  if [ "$id" = "calcifer" ]; then
+    workspace_dir="$HOME/.openclaw/workspace"
+  else
+    workspace_dir="$HOME/.openclaw/workspace-$id"
+  fi
+  local soul_file="$workspace_dir/SOUL.md"
+
+  mkdir -p "$workspace_dir"
   echo "$content" > "$soul_file"
   ok "Wrote $soul_file"
 }
@@ -974,11 +982,15 @@ fi
 echo ""
 echo "  Checking demon agents..."
 for id in calcifer buer paimon alloces dantalion andromalius malphas; do
-  soul_file="$HOME/.openclaw/agents/$id/agent/soul.md"
-  if [ -f "$soul_file" ]; then
-    ok "$id: soul file exists"
+  if [ "$id" = "calcifer" ]; then
+    soul_file="$HOME/.openclaw/workspace/SOUL.md"
   else
-    warn "$id: soul file missing"
+    soul_file="$HOME/.openclaw/workspace-$id/SOUL.md"
+  fi
+  if [ -f "$soul_file" ]; then
+    ok "$id: soul file exists ($(wc -c < "$soul_file" | tr -d ' ') bytes)"
+  else
+    warn "$id: soul file missing at $soul_file"
   fi
 done
 

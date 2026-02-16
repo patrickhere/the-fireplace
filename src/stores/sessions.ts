@@ -133,6 +133,8 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         limit: 200,
         includeDerivedTitles: true,
         includeLastMessage: true,
+        includeGlobal: true,
+        includeUnknown: true,
       });
 
       set({

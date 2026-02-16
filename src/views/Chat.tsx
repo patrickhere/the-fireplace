@@ -26,6 +26,8 @@ function SessionSelector() {
         }>('sessions.list', {
           limit: 100,
           includeDerivedTitles: false,
+          includeGlobal: true,
+          includeUnknown: true,
         });
         const sessionList = response.sessions || [];
         setSessions(sessionList);
