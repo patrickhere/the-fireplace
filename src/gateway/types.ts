@@ -275,17 +275,10 @@ export interface ReconnectState {
 }
 
 // ---- Chat Event Payload ---------------------------------------------------
-
-export interface ChatEventPayload {
-  runId: string;
-  sessionKey: string;
-  seq: number;
-  state: 'delta' | 'final' | 'aborted' | 'error';
-  message?: unknown;
-  errorMessage?: string;
-  usage?: unknown;
-  stopReason?: string;
-}
+// The canonical ChatEventPayload type lives in src/stores/chat.ts.
+// It uses { delta, done, error } fields matching our gateway fork's actual wire format.
+// A conflicting type was previously defined here and has been removed.
+// Import ChatEventPayload from '@/stores/chat' instead.
 
 // ---- Tick / Shutdown Event Payloads ---------------------------------------
 

@@ -44,8 +44,7 @@ export type {
   PresenceEntry,
   SessionDefaults,
   AuthMode,
-  // Chat events
-  ChatEventPayload,
+  // Chat events — ChatEventPayload lives in @/stores/chat (canonical type)
   // Tick / Shutdown events
   TickEventPayload,
   ShutdownEventPayload,

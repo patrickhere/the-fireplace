@@ -116,6 +116,11 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       // Track which sessionKeys have an active stream without messageId,
       // so concurrent anonymous streams get unique buffer keys
       let anonStreamCounter = 0;
+      // Limitation: anonymous streams (no messageId) are tracked one-at-a-time per session.
+      // If the gateway sends interleaved deltas for multiple concurrent anonymous streams
+      // in the same session, content may merge. This is inherent to the protocol — without
+      // a stable stream identifier, concurrent anonymous streams cannot be disambiguated.
+      // In practice, demon sessions process one message at a time, so this is safe.
       const activeAnonKeys = new Map<string, string>(); // sessionKey → bufferKey
 
       const unsub = subscribe<ChatEventPayload>('chat', (payload) => {

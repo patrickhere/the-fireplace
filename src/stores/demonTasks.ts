@@ -71,126 +71,131 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
     set({ isTracking: true });
 
     (async () => {
-      const { useConnectionStore } = await import('./connection');
-      const { useAgentsStore } = await import('./agents');
-      const { subscribe } = useConnectionStore.getState();
+      try {
+        const { useConnectionStore } = await import('./connection');
+        const { useAgentsStore } = await import('./agents');
+        const { subscribe } = useConnectionStore.getState();
 
-      // Build agent lookup for emoji/name resolution
-      const getAgentInfo = (agentId: string) => {
-        const { agents } = useAgentsStore.getState();
-        const agent = agents.find((a) => a.id === agentId);
-        return {
-          name: agent?.identity?.name ?? agent?.name ?? agentId,
-          emoji: agent?.identity?.emoji ?? '👤',
+        // Build agent lookup for emoji/name resolution
+        const getAgentInfo = (agentId: string) => {
+          const { agents } = useAgentsStore.getState();
+          const agent = agents.find((a) => a.id === agentId);
+          return {
+            name: agent?.identity?.name ?? agent?.name ?? agentId,
+            emoji: agent?.identity?.emoji ?? '👤',
+          };
         };
-      };
 
-      // Track streaming sessions to detect new tasks
-      const streamingSessions = new Set<string>();
+        // Track streaming sessions to detect new tasks
+        const streamingSessions = new Set<string>();
 
-      const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
-        const { tasks } = get();
-        const { agents } = useAgentsStore.getState();
+        const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
+          const { tasks } = get();
+          const { agents } = useAgentsStore.getState();
 
-        // Match agent from sessionKey
-        const matchedAgent =
-          agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
-          agents.find(
-            (a) =>
-              a.identity?.name &&
-              payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
-          );
-        if (!matchedAgent) return;
-        const agentId = matchedAgent.id;
-
-        // Handle errors
-        if (payload.error) {
-          const sessionKey = payload.sessionKey;
-          streamingSessions.delete(sessionKey);
-          const updated = tasks.map((t) => {
-            if (
-              t.assignedTo === agentId &&
-              t.sessionKey === sessionKey &&
-              (t.status === 'in_progress' || t.status === 'queued')
-            ) {
-              return {
-                ...t,
-                status: 'failed' as const,
-                completedAt: Date.now(),
-                error: payload.error?.message ?? 'Unknown error',
-              };
-            }
-            return t;
-          });
-          set({ tasks: updated });
-          return;
-        }
-
-        // Handle done
-        if (payload.done) {
-          const sessionKey = payload.sessionKey;
-          streamingSessions.delete(sessionKey);
-          const updated = tasks.map((t) => {
-            if (
-              t.assignedTo === agentId &&
-              t.sessionKey === sessionKey &&
-              t.status === 'in_progress'
-            ) {
-              return { ...t, status: 'done' as const, completedAt: Date.now() };
-            }
-            return t;
-          });
-          set({ tasks: updated });
-          return;
-        }
-
-        // Handle delta — first delta for a session creates a task, subsequent ones mark in_progress
-        if (payload.delta) {
-          const sessionKey = payload.sessionKey;
-
-          if (!streamingSessions.has(sessionKey)) {
-            streamingSessions.add(sessionKey);
-
-            // Check if we already have a task for this session
-            const existing = tasks.find(
-              (t) => t.assignedTo === agentId && t.sessionKey === sessionKey
+          // Match agent from sessionKey
+          const matchedAgent =
+            agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+            agents.find(
+              (a) =>
+                a.identity?.name &&
+                payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
             );
-            if (!existing) {
-              const info = getAgentInfo(agentId);
-              const newTask: DemonTask = {
-                id: generateTaskId(),
-                description: `Session ${sessionKey}`,
-                status: 'in_progress',
-                assignedTo: agentId,
-                assignedToEmoji: info.emoji,
-                assignedToName: info.name,
-                delegatedBy: '',
-                delegatedByEmoji: '',
-                delegatedByName: '',
-                sessionKey,
-                model: '',
-                cliBackend: null,
-                createdAt: Date.now(),
-                startedAt: Date.now(),
-                completedAt: null,
-                error: null,
-              };
+          if (!matchedAgent) return;
+          const agentId = matchedAgent.id;
 
-              const trimmed = [...tasks, newTask];
-              if (trimmed.length > MAX_TASKS) {
-                const doneIdx = trimmed.findIndex(
-                  (t) => t.status === 'done' || t.status === 'failed'
-                );
-                if (doneIdx !== -1) trimmed.splice(doneIdx, 1);
-                else trimmed.shift();
+          // Handle errors
+          if (payload.error) {
+            const sessionKey = payload.sessionKey;
+            streamingSessions.delete(sessionKey);
+            const updated = tasks.map((t) => {
+              if (
+                t.assignedTo === agentId &&
+                t.sessionKey === sessionKey &&
+                (t.status === 'in_progress' || t.status === 'queued')
+              ) {
+                return {
+                  ...t,
+                  status: 'failed' as const,
+                  completedAt: Date.now(),
+                  error: payload.error?.message ?? 'Unknown error',
+                };
               }
-              set({ tasks: trimmed });
+              return t;
+            });
+            set({ tasks: updated });
+            return;
+          }
+
+          // Handle done
+          if (payload.done) {
+            const sessionKey = payload.sessionKey;
+            streamingSessions.delete(sessionKey);
+            const updated = tasks.map((t) => {
+              if (
+                t.assignedTo === agentId &&
+                t.sessionKey === sessionKey &&
+                t.status === 'in_progress'
+              ) {
+                return { ...t, status: 'done' as const, completedAt: Date.now() };
+              }
+              return t;
+            });
+            set({ tasks: updated });
+            return;
+          }
+
+          // Handle delta — first delta for a session creates a task, subsequent ones mark in_progress
+          if (payload.delta) {
+            const sessionKey = payload.sessionKey;
+
+            if (!streamingSessions.has(sessionKey)) {
+              streamingSessions.add(sessionKey);
+
+              // Check if we already have a task for this session
+              const existing = tasks.find(
+                (t) => t.assignedTo === agentId && t.sessionKey === sessionKey
+              );
+              if (!existing) {
+                const info = getAgentInfo(agentId);
+                const newTask: DemonTask = {
+                  id: generateTaskId(),
+                  description: `Session ${sessionKey}`,
+                  status: 'in_progress',
+                  assignedTo: agentId,
+                  assignedToEmoji: info.emoji,
+                  assignedToName: info.name,
+                  delegatedBy: '',
+                  delegatedByEmoji: '',
+                  delegatedByName: '',
+                  sessionKey,
+                  model: '',
+                  cliBackend: null,
+                  createdAt: Date.now(),
+                  startedAt: Date.now(),
+                  completedAt: null,
+                  error: null,
+                };
+
+                const trimmed = [...tasks, newTask];
+                if (trimmed.length > MAX_TASKS) {
+                  const doneIdx = trimmed.findIndex(
+                    (t) => t.status === 'done' || t.status === 'failed'
+                  );
+                  if (doneIdx !== -1) trimmed.splice(doneIdx, 1);
+                  else trimmed.shift();
+                }
+                set({ tasks: trimmed });
+              }
             }
           }
-        }
-      });
+        });
 
-      set({ _chatUnsub: chatUnsub });
+        set({ _chatUnsub: chatUnsub });
+      } catch (err) {
+        console.error('[DemonTasks] Failed to start tracking:', err);
+        set({ isTracking: false, _chatUnsub: null });
+      }
     })();
   },
 

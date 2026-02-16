@@ -82,145 +82,156 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
     set({ isMonitoring: true });
 
     (async () => {
-      const { useConnectionStore } = await import('./connection');
-      const { useAgentsStore } = await import('./agents');
-      const { subscribe } = useConnectionStore.getState();
+      try {
+        const { useConnectionStore } = await import('./connection');
+        const { useAgentsStore } = await import('./agents');
+        const { subscribe } = useConnectionStore.getState();
 
-      // Initialize demons from agents store
-      const { agents } = useAgentsStore.getState();
-      if (agents.length > 0) {
-        set({
-          demons: agents.map(buildDemonFromAgent),
-        });
-      } else {
-        // Agents not loaded yet — load them first
-        await useAgentsStore.getState().loadAgents();
-        const freshAgents = useAgentsStore.getState().agents;
-        set({
-          demons: freshAgents.map(buildDemonFromAgent),
-        });
-      }
-
-      // Subscribe to chat events to detect working/idle state
-      const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
-        const { demons } = get();
-
-        // Match agent from sessionKey
+        // Initialize demons from agents store
         const { agents } = useAgentsStore.getState();
-        const matchedAgent =
-          agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
-          agents.find(
-            (a) =>
-              a.identity?.name &&
-              payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
-          );
-        const agentId = matchedAgent?.id;
-        if (!agentId) return;
-
-        const prev = demons.find((d) => d.demonId === agentId);
-        if (!prev) return;
-
-        let state: DemonStatus['state'] = 'working';
-        let currentTask = prev.currentTask;
-
-        if (payload.done) {
-          state = 'idle';
-          currentTask = null;
-        } else if (payload.delta) {
-          // First delta of a new message = working
-          state = 'working';
+        if (agents.length > 0) {
+          set({
+            demons: agents.map(buildDemonFromAgent),
+          });
+        } else {
+          // Agents not loaded yet — load them first
+          await useAgentsStore.getState().loadAgents();
+          const freshAgents = useAgentsStore.getState().agents;
+          set({
+            demons: freshAgents.map(buildDemonFromAgent),
+          });
         }
 
-        set({
-          demons: demons.map((d) =>
-            d.demonId === agentId ? { ...d, lastActivity: Date.now(), state, currentTask } : d
-          ),
-        });
-      });
+        // Subscribe to chat events to detect working/idle state
+        const chatUnsub = subscribe<ChatEventPayload>('chat', (payload) => {
+          const { demons } = get();
 
-      // Subscribe to exec approval events to detect CLI backend usage
-      const execUnsub = subscribe<{
-        agentId?: string;
-        command?: string;
-      }>('exec.approval.requested', (payload) => {
-        const { demons } = get();
-        const agentId = payload.agentId;
-        if (!agentId) return;
+          // Match agent from sessionKey
+          const { agents } = useAgentsStore.getState();
+          const matchedAgent =
+            agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+            agents.find(
+              (a) =>
+                a.identity?.name &&
+                payload.sessionKey.toLowerCase().includes(a.identity.name.toLowerCase())
+            );
+          const agentId = matchedAgent?.id;
+          if (!agentId) return;
 
-        if (!demons.some((d) => d.demonId === agentId)) return;
+          const prev = demons.find((d) => d.demonId === agentId);
+          if (!prev) return;
 
-        const cmd = payload.command ?? '';
-        const isClaude = cmd.startsWith('claude');
-        const isCodex = cmd.startsWith('codex');
-        if (!isClaude && !isCodex) return;
+          let state: DemonStatus['state'] = 'working';
+          let currentTask = prev.currentTask;
 
-        // Mark CLI backend as active
-        set({
-          demons: demons.map((d) =>
-            d.demonId === agentId
-              ? {
-                  ...d,
-                  cliBackend: {
-                    active: true,
-                    tool: isClaude ? 'claude-code' : 'codex',
-                    startedAt: Date.now(),
-                  },
-                  lastActivity: Date.now(),
-                }
-              : d
-          ),
-        });
-
-        // Auto-clear after 10 minutes (no completion event available)
-        const timeoutId = setTimeout(
-          () => {
-            const { demons: current } = get();
-            const demon = current.find((d) => d.demonId === agentId);
-            if (demon?.cliBackend.active && demon.cliBackend.startedAt) {
-              const elapsed = Date.now() - demon.cliBackend.startedAt;
-              if (elapsed >= 10 * 60 * 1000) {
-                set({
-                  demons: current.map((d) =>
-                    d.demonId === agentId
-                      ? { ...d, cliBackend: { active: false, tool: null, startedAt: null } }
-                      : d
-                  ),
-                });
-              }
-            }
-            // Self-remove from tracked timeouts to prevent memory leak
-            set((state) => ({
-              _execTimeouts: state._execTimeouts.filter((t) => t !== timeoutId),
-            }));
-          },
-          10 * 60 * 1000
-        );
-        set((state) => ({ _execTimeouts: [...state._execTimeouts, timeoutId] }));
-      });
-
-      // Periodic idle check — mark demons as idle if no activity for 5 min
-      const idleCheckInterval = setInterval(() => {
-        const { demons } = get();
-        const now = Date.now();
-        let changed = false;
-        const updated = demons.map((d) => {
-          if (d.state === 'working' && now - d.lastActivity > IDLE_THRESHOLD_MS) {
-            changed = true;
-            return { ...d, state: 'idle' as const, currentTask: null };
+          if (payload.done) {
+            state = 'idle';
+            currentTask = null;
+          } else if (payload.delta) {
+            // First delta of a new message = working
+            state = 'working';
           }
-          return d;
+
+          set({
+            demons: demons.map((d) =>
+              d.demonId === agentId ? { ...d, lastActivity: Date.now(), state, currentTask } : d
+            ),
+          });
         });
-        if (changed) set({ demons: updated });
-      }, 30_000);
 
-      set({
-        _chatUnsub: chatUnsub,
-        _execUnsub: execUnsub,
-        _idleCheckInterval: idleCheckInterval,
-      });
+        // Subscribe to exec approval events to detect CLI backend usage
+        const execUnsub = subscribe<{
+          agentId?: string;
+          command?: string;
+        }>('exec.approval.requested', (payload) => {
+          const { demons } = get();
+          const agentId = payload.agentId;
+          if (!agentId) return;
 
-      // Initial refresh
-      get().refreshAll();
+          if (!demons.some((d) => d.demonId === agentId)) return;
+
+          const cmd = payload.command ?? '';
+          const isClaude = cmd.startsWith('claude');
+          const isCodex = cmd.startsWith('codex');
+          if (!isClaude && !isCodex) return;
+
+          // Mark CLI backend as active
+          set({
+            demons: demons.map((d) =>
+              d.demonId === agentId
+                ? {
+                    ...d,
+                    cliBackend: {
+                      active: true,
+                      tool: isClaude ? 'claude-code' : 'codex',
+                      startedAt: Date.now(),
+                    },
+                    lastActivity: Date.now(),
+                  }
+                : d
+            ),
+          });
+
+          // Auto-clear after 10 minutes (no completion event available)
+          const timeoutId = setTimeout(
+            () => {
+              const { demons: current } = get();
+              const demon = current.find((d) => d.demonId === agentId);
+              if (demon?.cliBackend.active && demon.cliBackend.startedAt) {
+                const elapsed = Date.now() - demon.cliBackend.startedAt;
+                if (elapsed >= 10 * 60 * 1000) {
+                  set({
+                    demons: current.map((d) =>
+                      d.demonId === agentId
+                        ? { ...d, cliBackend: { active: false, tool: null, startedAt: null } }
+                        : d
+                    ),
+                  });
+                }
+              }
+              // Self-remove from tracked timeouts to prevent memory leak
+              set((state) => ({
+                _execTimeouts: state._execTimeouts.filter((t) => t !== timeoutId),
+              }));
+            },
+            10 * 60 * 1000
+          );
+          set((state) => ({ _execTimeouts: [...state._execTimeouts, timeoutId] }));
+        });
+
+        // Periodic idle check — mark demons as idle if no activity for 5 min
+        const idleCheckInterval = setInterval(() => {
+          const { demons } = get();
+          const now = Date.now();
+          let changed = false;
+          const updated = demons.map((d) => {
+            if (d.state === 'working' && now - d.lastActivity > IDLE_THRESHOLD_MS) {
+              changed = true;
+              return { ...d, state: 'idle' as const, currentTask: null };
+            }
+            return d;
+          });
+          if (changed) set({ demons: updated });
+        }, 30_000);
+
+        set({
+          _chatUnsub: chatUnsub,
+          _execUnsub: execUnsub,
+          _idleCheckInterval: idleCheckInterval,
+        });
+
+        // Initial refresh
+        get().refreshAll();
+      } catch (err) {
+        console.error('[DemonHealth] Failed to start monitoring:', err);
+        set({
+          isMonitoring: false,
+          _chatUnsub: null,
+          _execUnsub: null,
+          _idleCheckInterval: null,
+          _execTimeouts: [],
+        });
+      }
     })();
   },
 
