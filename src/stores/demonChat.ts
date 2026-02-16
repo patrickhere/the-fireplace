@@ -35,6 +35,8 @@ interface DemonChatState {
   // Actions
   startListening: () => void;
   stopListening: () => void;
+  /** Full teardown — stops listening AND removes the connection watcher. Use on view unmount. */
+  teardown: () => void;
   toggleDemonFilter: (demonId: string) => void;
   injectMessage: (demonId: string, message: string) => Promise<void>;
   getFilteredMessages: () => DemonChatMessage[];
@@ -242,13 +244,19 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   },
 
   stopListening: () => {
+    const { _unsubscribe } = get();
+    if (_unsubscribe) _unsubscribe();
+    // Note: _connUnsub is intentionally preserved so the connection watcher
+    // can trigger auto-restart on reconnect. It is only cleared when the
+    // view explicitly tears down via the cleanup in startListening or
+    // when a new startListening call replaces it.
+    set({ _unsubscribe: null, isListening: false });
+  },
+
+  teardown: () => {
     const { _unsubscribe, _connUnsub } = get();
-    if (_unsubscribe) {
-      _unsubscribe();
-    }
-    if (_connUnsub) {
-      _connUnsub();
-    }
+    if (_unsubscribe) _unsubscribe();
+    if (_connUnsub) _connUnsub();
     set({ _unsubscribe: null, _connUnsub: null, isListening: false });
   },
 

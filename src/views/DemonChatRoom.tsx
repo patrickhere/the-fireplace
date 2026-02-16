@@ -78,7 +78,7 @@ export function DemonChatRoom() {
     activeDemonFilters,
     isListening,
     startListening,
-    stopListening,
+    teardown,
     toggleDemonFilter,
     getFilteredMessages,
     injectMessage,
@@ -100,11 +100,11 @@ export function DemonChatRoom() {
     }
   }, [agents.length, loadAgents]);
 
-  // Start listening on mount, stop on unmount
+  // Start listening on mount, full teardown on unmount
   useEffect(() => {
     startListening();
-    return () => stopListening();
-  }, [startListening, stopListening]);
+    return () => teardown();
+  }, [startListening, teardown]);
 
   // Auto-scroll to bottom
   useEffect(() => {
