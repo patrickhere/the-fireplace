@@ -279,7 +279,11 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
     // Find an active session for the demon via sessions.list
     const sessionsResult = await request<{
       sessions: Array<{ key: string; agentId?: string }>;
-    }>('sessions.list', {});
+    }>('sessions.list', {
+      limit: 200,
+      includeGlobal: true,
+      includeUnknown: true,
+    });
 
     const demonSession = sessionsResult.sessions.find(
       (s) => s.agentId === demonId || s.key.startsWith(demonId)

@@ -13,7 +13,7 @@ import type { Attachment, SessionConfig, Message } from '@/stores/chat';
 function SessionSelector() {
   const { activeSessionKey, setActiveSession } = useChatStore();
   const [sessions, setSessions] = useState<Array<{ key: string; label?: string }>>([]);
-  const { request, status } = useConnectionStore();
+  const { request, status, snapshot } = useConnectionStore();
 
   useEffect(() => {
     if (status !== 'connected') return;
@@ -30,13 +30,27 @@ function SessionSelector() {
           includeUnknown: true,
         });
         const sessionList = response.sessions || [];
+        const mainSessionKey = snapshot?.sessionDefaults?.mainSessionKey?.trim();
+
+        if (sessionList.length === 0 && mainSessionKey) {
+          const fallback = [{ key: mainSessionKey, label: 'Main' }];
+          setSessions(fallback);
+          if (!activeSessionKey) {
+            setActiveSession(mainSessionKey);
+          }
+          return;
+        }
+
         setSessions(sessionList);
 
         // Set first session as active if none selected
         if (!activeSessionKey && sessionList.length > 0) {
-          const firstSession = sessionList[0];
-          if (firstSession) {
-            setActiveSession(firstSession.key);
+          const preferred = mainSessionKey
+            ? sessionList.find((session) => session.key === mainSessionKey)
+            : undefined;
+          const target = preferred ?? sessionList[0];
+          if (target) {
+            setActiveSession(target.key);
           }
         }
       } catch (err) {
@@ -45,7 +59,7 @@ function SessionSelector() {
     };
 
     loadSessions();
-  }, [status, request, activeSessionKey, setActiveSession]);
+  }, [status, request, snapshot, activeSessionKey, setActiveSession]);
 
   if (sessions.length === 0) {
     return <div className="text-sm text-zinc-500">No sessions available</div>;

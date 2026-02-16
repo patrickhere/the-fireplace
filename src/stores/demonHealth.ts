@@ -259,6 +259,8 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
         limit: 200,
         includeDerivedTitles: true,
         includeLastMessage: true,
+        includeGlobal: true,
+        includeUnknown: true,
       });
 
       const sessions = response.sessions ?? [];
