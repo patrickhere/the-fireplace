@@ -263,30 +263,74 @@ config.setdefault("models", {})
 config["models"]["mode"] = "merge"
 config["models"].setdefault("providers", {})
 
-# Add copilot provider (Anthropic API format)
+# Add copilot provider (Anthropic-compatible models via proxy)
+# Actual models from proxy: claude-opus-4.6, claude-sonnet-4.5, claude-opus-4.5, claude-haiku-4.5
 config["models"]["providers"]["copilot"] = {
     "baseUrl": "http://127.0.0.1:4141",
     "apiKey": "dummy",
     "api": "anthropic-messages",
     "models": [
         {
-            "id": "claude-3.5-sonnet",
-            "name": "Copilot Claude 3.5 Sonnet",
+            "id": "claude-opus-4.6",
+            "name": "Copilot Claude Opus 4.6",
             "reasoning": False,
             "input": ["text"],
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
             "contextWindow": 200000,
-            "maxTokens": 8192
+            "maxTokens": 16384
+        },
+        {
+            "id": "claude-sonnet-4.5",
+            "name": "Copilot Claude Sonnet 4.5",
+            "reasoning": False,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 16384
+        },
+        {
+            "id": "claude-haiku-4.5",
+            "name": "Copilot Claude Haiku 4.5",
+            "reasoning": False,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 16384
         }
     ]
 }
 
-# Add copilot-openai provider (OpenAI API format)
+# Add copilot-openai provider (OpenAI-compatible models via proxy)
+# Actual models: gpt-5, gpt-5.1, gpt-5.2, gpt-5-mini, gpt-4o, gpt-4o-mini, gemini-2.5-pro, gemini-3-flash-preview
 config["models"]["providers"]["copilot-openai"] = {
     "baseUrl": "http://127.0.0.1:4141/v1",
     "apiKey": "dummy",
     "api": "openai-completions",
     "models": [
+        {
+            "id": "gpt-5",
+            "name": "Copilot GPT-5",
+            "reasoning": False,
+            "cost": {"input": 0, "output": 0},
+            "contextWindow": 128000,
+            "maxTokens": 16384
+        },
+        {
+            "id": "gpt-5.1",
+            "name": "Copilot GPT-5.1",
+            "reasoning": False,
+            "cost": {"input": 0, "output": 0},
+            "contextWindow": 128000,
+            "maxTokens": 16384
+        },
+        {
+            "id": "gpt-5-mini",
+            "name": "Copilot GPT-5 Mini",
+            "reasoning": False,
+            "cost": {"input": 0, "output": 0},
+            "contextWindow": 128000,
+            "maxTokens": 16384
+        },
         {
             "id": "gpt-4o",
             "name": "Copilot GPT-4o",
@@ -296,71 +340,73 @@ config["models"]["providers"]["copilot-openai"] = {
             "maxTokens": 16384
         },
         {
-            "id": "gpt-4o-mini",
-            "name": "Copilot GPT-4o Mini",
+            "id": "gemini-2.5-pro",
+            "name": "Copilot Gemini 2.5 Pro",
             "reasoning": False,
             "cost": {"input": 0, "output": 0},
-            "contextWindow": 128000,
-            "maxTokens": 16384
+            "contextWindow": 1000000,
+            "maxTokens": 65536
         },
         {
-            "id": "o1-mini",
-            "name": "Copilot o1-mini",
-            "reasoning": True,
+            "id": "gemini-3-flash-preview",
+            "name": "Copilot Gemini 3 Flash",
+            "reasoning": False,
             "cost": {"input": 0, "output": 0},
-            "contextWindow": 128000,
+            "contextWindow": 1000000,
             "maxTokens": 65536
         }
     ]
 }
 
 # Configure agent defaults
+# With the proxy giving us frontier models for free, use those as defaults
 config.setdefault("agents", {})
 config["agents"].setdefault("defaults", {})
 config["agents"]["defaults"]["model"] = {
-    "primary": "copilot/claude-3.5-sonnet",
+    "primary": "copilot/claude-sonnet-4.5",
     "fallbacks": [
-        "copilot-openai/gpt-4o",
+        "copilot-openai/gpt-5",
         "google/gemini-2.5-flash",
         "anthropic/claude-sonnet-4-5"
     ]
 }
 config["agents"]["defaults"]["heartbeat"] = {
-    "model": "google/gemini-2.5-flash-lite"
+    "model": "copilot/claude-haiku-4.5"
 }
 config["agents"]["defaults"]["subagents"] = {
-    "model": "copilot-openai/gpt-4o-mini"
+    "model": "copilot-openai/gpt-5-mini"
 }
 
-# Per-demon model assignments
+# Per-demon model assignments — using actual proxy model IDs
+# ALL demons now run on frontier models at $0 marginal cost via proxy!
 demon_models = {
     "calcifer": {
-        "primary": "anthropic/claude-opus-4-6",
-        "fallbacks": ["anthropic/claude-sonnet-4-5", "copilot/claude-3.5-sonnet"]
+        "primary": "copilot/claude-opus-4.6",
+        "fallbacks": ["copilot-openai/gpt-5.1", "anthropic/claude-opus-4-6"]
     },
     "buer": {
-        "primary": "copilot/claude-3.5-sonnet",
-        "fallbacks": ["copilot-openai/gpt-4o", "google/gemini-2.5-flash"]
+        "primary": "copilot/claude-sonnet-4.5",
+        "fallbacks": ["copilot-openai/gpt-5", "google/gemini-2.5-flash"]
     },
     "paimon": {
-        "primary": "google/gemini-2.5-flash",
-        "fallbacks": ["google/gemini-2.5-flash-lite", "copilot-openai/gpt-4o-mini"]
+        "primary": "copilot-openai/gemini-2.5-pro",
+        "fallbacks": ["google/gemini-2.5-flash", "copilot/claude-haiku-4.5"]
     },
     "alloces": {
-        "primary": "copilot-openai/gpt-4o",
-        "fallbacks": ["copilot/claude-3.5-sonnet", "google/gemini-2.5-flash"]
+        "primary": "copilot-openai/gpt-5",
+        "fallbacks": ["copilot/claude-sonnet-4.5", "google/gemini-2.5-flash"]
     },
     "dantalion": {
-        "primary": "copilot-openai/gpt-4o-mini",
-        "fallbacks": ["google/gemini-2.5-flash-lite"]
+        "primary": "copilot-openai/gpt-5-mini",
+        "fallbacks": ["copilot/claude-haiku-4.5", "google/gemini-2.5-flash"]
     },
     "andromalius": {
-        "primary": "anthropic/claude-sonnet-4-5",
-        "fallbacks": ["copilot/claude-3.5-sonnet"]
+        "primary": "copilot/claude-opus-4.6",
+        "fallbacks": ["copilot/claude-sonnet-4.5", "anthropic/claude-sonnet-4-5"]
     },
     "malphas": {
-        "primary": "copilot/claude-3.5-sonnet",
-        "fallbacks": ["copilot-openai/gpt-4o"]
+        "primary": "copilot-openai/gpt-5.1",
+        "fallbacks": ["copilot/claude-sonnet-4.5", "copilot-openai/gpt-5"]
     }
 }
 

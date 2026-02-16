@@ -593,13 +593,15 @@ openclaw models status --probe          # Test connectivity to all endpoints
 
 | Demon | ID | Model | Role |
 |-------|----|-------|------|
-| **Calcifer** 🔥 | `calcifer` | `anthropic/claude-opus-4-6` (MAX) | Primary orchestrator, critical decisions |
-| **Buer** 📐 | `buer` | `copilot/claude-3.5-sonnet` (free) | Architect: code audit, optimization |
-| **Paimon** 📚 | `paimon` | `google/gemini-2.5-flash` (free) | Knowledge: research, documentation |
-| **Alloces** ♟️ | `alloces` | `copilot-openai/gpt-4o` (free) | Strategy: resource allocation, planning |
-| **Dantalion** 🧠 | `dantalion` | `copilot-openai/gpt-4o-mini` (free) | Intent: NLU, context inference |
-| **Andromalius** 🛡️ | `andromalius` | `anthropic/claude-sonnet-4-5` (MAX) | Security: threat monitoring, access control |
-| **Malphas** 🏗️ | `malphas` | `copilot/claude-3.5-sonnet` (free) | Builder: code generation, scaffolding |
+| **Calcifer** 🔥 | `calcifer` | `copilot/claude-opus-4.6` (free via proxy!) | Primary orchestrator, critical decisions |
+| **Buer** 📐 | `buer` | `copilot/claude-sonnet-4.5` (free) | Architect: code audit, optimization |
+| **Paimon** 📚 | `paimon` | `copilot-openai/gemini-2.5-pro` (free) | Knowledge: research, documentation |
+| **Alloces** ♟️ | `alloces` | `copilot-openai/gpt-5` (free) | Strategy: resource allocation, planning |
+| **Dantalion** 🧠 | `dantalion` | `copilot-openai/gpt-5-mini` (free) | Intent: NLU, context inference |
+| **Andromalius** 🛡️ | `andromalius` | `copilot/claude-opus-4.6` (free) | Security: threat monitoring, access control |
+| **Malphas** 🏗️ | `malphas` | `copilot-openai/gpt-5.1` (free) | Builder: code generation, scaffolding |
+
+> **Note**: The Copilot proxy provides access to frontier models (Claude Opus 4.6, GPT-5.x, Gemini 2.5 Pro, Gemini 3 Flash) at $0 marginal cost. **ALL 7 demons now run on free-tier models.** Direct Anthropic/Google APIs are kept only as last-resort fallbacks.
 
 #### Create via OpenClaw CLI
 
@@ -1441,7 +1443,7 @@ Phase 12 (Integration — depends on all above)
 | Gemini API | $0 | Free tier — Paimon (research), heartbeats |
 | **Total** | **$130/mo** | Down from ~$1,750+/mo on direct API |
 
-**5 of 7 demons run at $0 marginal API cost** (Copilot proxy + Gemini free tier).
+**ALL 7 demons run at $0 marginal API cost** — the Copilot proxy provides Claude Opus 4.6, GPT-5.x, Gemini 2.5 Pro, and more for free. Direct API subs are fallback-only.
 **All 7 demons** can spawn Claude Code or Codex for coding tasks — covered by existing MAX + Plus subs.
 
 ---
