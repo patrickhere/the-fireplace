@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useSessionsStore } from '@/stores/sessions';
 import { useConnectionStore } from '@/stores/connection';
 import { useIsMobile } from '@/hooks/usePlatform';
+import { SessionReplay } from '@/components/SessionReplay';
 import type { SessionListItem, SessionConfig } from '@/stores/sessions';
 
 // ---- Session Preview Modal ------------------------------------------------
@@ -297,7 +298,13 @@ function SessionUsageModal() {
 
 // ---- Session Row (Desktop) ------------------------------------------------
 
-function SessionRow({ session }: { session: SessionListItem }) {
+function SessionRow({
+  session,
+  onReplay,
+}: {
+  session: SessionListItem;
+  onReplay: (key: string) => void;
+}) {
   const { previewSession, resetSession, deleteSession, compactSession } = useSessionsStore();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -319,6 +326,14 @@ function SessionRow({ session }: { session: SessionListItem }) {
         </td>
         <td className="p-3">
           <div className="flex gap-2">
+            <button
+              onClick={() => onReplay(session.key)}
+              className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+              type="button"
+              title="Replay session"
+            >
+              ▶
+            </button>
             <button
               onClick={() => previewSession(session.key)}
               className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
@@ -392,7 +407,13 @@ function SessionRow({ session }: { session: SessionListItem }) {
 
 // ---- Session Card (Mobile) ------------------------------------------------
 
-function SessionCard({ session }: { session: SessionListItem }) {
+function SessionCard({
+  session,
+  onReplay,
+}: {
+  session: SessionListItem;
+  onReplay: (key: string) => void;
+}) {
   const { previewSession, resetSession, deleteSession, compactSession } = useSessionsStore();
   const [showActions, setShowActions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -428,6 +449,13 @@ function SessionCard({ session }: { session: SessionListItem }) {
 
       {showActions && !showDeleteConfirm && (
         <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={() => onReplay(session.key)}
+            className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+            type="button"
+          >
+            ▶ Replay
+          </button>
           <button
             onClick={() => previewSession(session.key)}
             className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
@@ -511,6 +539,7 @@ export function Sessions() {
 
   const { status } = useConnectionStore();
   const isMobile = useIsMobile();
+  const [replaySessionKey, setReplaySessionKey] = useState<string | null>(null);
 
   // Load sessions on mount and subscribe to events
   useEffect(() => {
@@ -637,7 +666,7 @@ export function Sessions() {
         ) : isMobile ? (
           <div className="space-y-3">
             {filteredSessions.map((session) => (
-              <SessionCard key={session.key} session={session} />
+              <SessionCard key={session.key} session={session} onReplay={setReplaySessionKey} />
             ))}
           </div>
         ) : (
@@ -653,7 +682,7 @@ export function Sessions() {
             </thead>
             <tbody>
               {filteredSessions.map((session) => (
-                <SessionRow key={session.key} session={session} />
+                <SessionRow key={session.key} session={session} onReplay={setReplaySessionKey} />
               ))}
             </tbody>
           </table>
@@ -664,6 +693,9 @@ export function Sessions() {
       <SessionPreviewModal />
       <SessionConfigModal />
       <SessionUsageModal />
+      {replaySessionKey && (
+        <SessionReplay sessionKey={replaySessionKey} onClose={() => setReplaySessionKey(null)} />
+      )}
     </div>
   );
 }

@@ -26,6 +26,12 @@ const navItems: NavItem[] = [
   { label: 'Usage', path: '/usage', icon: '$' },
 ];
 
+const demonNavItems: NavItem[] = [
+  { label: 'Chat Room', path: '/demon-chat', icon: '🔥' },
+  { label: 'Health', path: '/demon-health', icon: '♥' },
+  { label: 'Tasks', path: '/demon-tasks', icon: '☐' },
+];
+
 export function Sidebar() {
   const location = useLocation();
 
@@ -73,6 +79,36 @@ export function Sidebar() {
                     {item.shortcut && (
                       <span className="text-xs text-zinc-600">{formatShortcut(item.shortcut)}</span>
                     )}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        {/* Demons Section */}
+        <div className="mt-4 mb-1 px-3 text-xs font-medium tracking-wider text-zinc-600 uppercase">
+          Demons
+        </div>
+        <ul className="space-y-1">
+          {demonNavItems.map((item) => {
+            const isActive = location.pathname === item.path;
+            return (
+              <li key={item.path}>
+                <Link
+                  to={item.path}
+                  className={cn(
+                    'flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+                    isActive
+                      ? 'border-l-2 border-amber-500 bg-amber-500/10 text-amber-400'
+                      : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-5 w-5 items-center justify-center font-mono text-xs">
+                      {item.icon}
+                    </span>
+                    <span>{item.label}</span>
                   </div>
                 </Link>
               </li>

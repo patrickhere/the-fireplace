@@ -22,6 +22,9 @@ import { Logs } from '@/views/Logs';
 import { Models } from '@/views/Models';
 import { Usage } from '@/views/Usage';
 import { More } from '@/views/More';
+import { DemonChatRoom } from '@/views/DemonChatRoom';
+import { DemonHealth } from '@/views/DemonHealth';
+import { DemonKanban } from '@/views/DemonKanban';
 
 function App() {
   const isMobile = useIsMobile();
@@ -71,6 +74,9 @@ function App() {
               <Route path="/models" element={<Models />} />
               <Route path="/usage" element={<Usage />} />
               <Route path="/more" element={<More />} />
+              <Route path="/demon-chat" element={<DemonChatRoom />} />
+              <Route path="/demon-health" element={<DemonHealth />} />
+              <Route path="/demon-tasks" element={<DemonKanban />} />
             </Routes>
           </main>
 
