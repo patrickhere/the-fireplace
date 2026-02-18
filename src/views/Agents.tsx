@@ -394,12 +394,10 @@ function EditAgentModal({ agent }: { agent: Agent | null }) {
       return;
     }
     setNameError('');
-    const updates: Partial<Agent> = { name: name.trim(), identity: agent.identity };
+    // AgentsUpdateParamsSchema: { agentId, name?, workspace?, model? (string), avatar? }
+    const updates: Partial<Agent> = { name: name.trim() };
     if (primaryModel) {
-      updates.model = {
-        primary: primaryModel,
-        fallbacks: agent.model?.fallbacks ?? [],
-      };
+      updates.model = { primary: primaryModel, fallbacks: [] };
     }
     await updateAgent(agent.id, updates);
     setName('');

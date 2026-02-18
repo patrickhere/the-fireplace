@@ -194,10 +194,15 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     try {
       set({ error: null });
 
-      await request('agents.update', {
-        agentId,
-        ...updates,
-      });
+      // AgentsUpdateParamsSchema: { agentId, name?, workspace?, model? (string), avatar? }
+      // Whitelist only schema-valid fields — do not spread the full Agent object.
+      const params: Record<string, unknown> = { agentId };
+      if (updates.name !== undefined) params.name = updates.name;
+      if (updates.identity?.avatar !== undefined) params.avatar = updates.identity.avatar;
+      // model is a plain string (model ID) in the schema, not an object
+      if (updates.model?.primary) params.model = updates.model.primary;
+
+      await request('agents.update', params);
 
       toast.success('Agent updated');
       // Reload agents

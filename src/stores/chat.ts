@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
+import { useConnectionStore } from './connection';
 
 // ---- Message Types --------------------------------------------------------
 
@@ -44,6 +45,59 @@ export interface Attachment {
   size: number;
   data: string; // base64 encoded
   url?: string;
+}
+
+// ---- Gateway Attachment Block Types ---------------------------------------
+// The gateway `chat.send` `attachments` field accepts TArray<TUnknown>.
+// We send content blocks in Anthropic-compatible format; the gateway routes
+// these to the appropriate provider representation server-side.
+
+interface GatewayImageAttachment {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+}
+
+interface GatewayFileAttachment {
+  type: 'document';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+  title?: string;
+}
+
+type GatewayAttachment = GatewayImageAttachment | GatewayFileAttachment;
+
+/**
+ * Convert a UI Attachment to the gateway-compatible attachment block.
+ * Uses Anthropic content-block format since that is what the gateway
+ * forwards to the underlying provider.
+ */
+function toGatewayAttachment(att: Attachment): GatewayAttachment {
+  if (att.type.startsWith('image/')) {
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: att.type,
+        data: att.data,
+      },
+    };
+  }
+  return {
+    type: 'document',
+    source: {
+      type: 'base64',
+      media_type: att.type || 'application/octet-stream',
+      data: att.data,
+    },
+    title: att.name,
+  };
 }
 
 // ---- Session Config Types -------------------------------------------------
@@ -106,6 +160,7 @@ interface ChatState {
   eventUnsubscribe: Unsubscribe | null;
   _streamWatchdog: ReturnType<typeof setTimeout> | null;
   _pollFallback: ReturnType<typeof setTimeout> | null;
+  _activeRunId: string | null;
 
   // -- Actions
   setActiveSession: (sessionKey: string) => void;
@@ -256,16 +311,23 @@ function stripGatewayMetadata(text: string): string {
     /^System:\s*\[[\d\- :A-Z]+\]\s+\S+\s+(gateway\s+)?(connected|disconnected).*\n?/gim,
     ''
   );
-  // Remove "Conversation info (untrusted metadata):\n{...}\n" blocks
+  // Remove "Conversation info (untrusted metadata):\n{...}\n" blocks (with optional code fence)
   cleaned = cleaned.replace(
     /^Conversation info\s*\(untrusted metadata\):\s*\n```?\n?\{[\s\S]*?\}\n```?\n?/gim,
     ''
   );
-  // Simpler variant without code block
+  // Simpler variant: "Conversation info (untrusted metadata):" followed by JSON object
   cleaned = cleaned.replace(
     /^Conversation info\s*\(untrusted metadata\):\s*\n\{[\s\S]*?\}\n?/gim,
     ''
   );
+  // Remove gateway-injected timestamp prefixes: [Wed 2026-02-18 11:04 CST]
+  cleaned = cleaned.replace(
+    /^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\s*[A-Z]{2,5}\]\s*/gim,
+    ''
+  );
+  // Remove "System:" prefix lines with timestamps (various formats)
+  cleaned = cleaned.replace(/^System:\s*\[\d{4}-\d{2}-\d{2}[^\]]*\].*\n?/gim, '');
   // Remove [[reply_to_current]] markers
   cleaned = cleaned.replace(/\[\[reply_to_current\]\]/gi, '');
   // Remove leading/trailing whitespace
@@ -324,12 +386,14 @@ function normalizeHistoryEntry(entry: unknown): Message | null {
   // Build normalized message
   const id = typeof raw.id === 'string' && raw.id ? raw.id : generateMessageId();
 
+  // Use 0 sentinel for missing timestamps — Date.now() would misclassify
+  // old messages as fresh in time-based comparisons (e.g. poll fallback).
   const timestamp =
     typeof raw.timestamp === 'number'
       ? raw.timestamp
       : typeof raw.createdAt === 'number'
         ? raw.createdAt
-        : Date.now();
+        : 0;
 
   const model = typeof raw.model === 'string' ? raw.model : undefined;
 
@@ -344,6 +408,19 @@ function normalizeHistoryEntry(entry: unknown): Message | null {
         ? (raw.metadata as Record<string, unknown>)
         : undefined,
   };
+}
+
+// ---- Stream Timer Cleanup -------------------------------------------------
+// Centralized cleanup for _streamWatchdog and _pollFallback to prevent
+// stale timer callbacks from firing after abort/failure/unsubscribe.
+// Must be called on EVERY stream exit path.
+
+function clearStreamTimers(get: () => ChatState, set: (partial: Partial<ChatState>) => void) {
+  const watchdog = get()._streamWatchdog;
+  const poll = get()._pollFallback;
+  if (watchdog) clearTimeout(watchdog);
+  if (poll) clearTimeout(poll);
+  set({ _streamWatchdog: null, _pollFallback: null, _activeRunId: null });
 }
 
 // ---- Store ----------------------------------------------------------------
@@ -365,6 +442,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   eventUnsubscribe: null,
   _streamWatchdog: null,
   _pollFallback: null,
+  _activeRunId: null,
 
   setActiveSession: (sessionKey: string) => {
     const { activeSessionKey, unsubscribeFromEvents, subscribeToEvents } = get();
@@ -390,7 +468,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadHistory: async (sessionKey: string) => {
-    const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
@@ -421,9 +498,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: 'No active session' });
       return;
     }
-
-    const { useConnectionStore } = await import('./connection');
-    const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
@@ -458,107 +532,217 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: Date.now(),
       };
 
-      set((state) => ({
-        messages: [...state.messages, userMessage],
-        attachments: [], // Clear attachments after sending
-      }));
+      // Clear previous timers
+      clearStreamTimers(get, set);
 
-      // Send to gateway — response may come via events (streaming) or
-      // directly in the RPC response (non-streaming models like GPT-4.1)
-      const { sessionConfig } = get();
-      const sendResponse = await request<Record<string, unknown>>('chat.send', {
-        sessionKey: activeSessionKey,
-        message: text,
-        idempotencyKey: crypto.randomUUID(),
-        ...(sessionConfig.model ? { model: sessionConfig.model } : {}),
-      });
-
-      // Check if the gateway returned the response synchronously
-      // (non-streaming models return the full response in the RPC result)
-      const syncMessage = sendResponse?.message ?? sendResponse?.response;
-      const syncText = syncMessage ? extractTextFromEventMessage(syncMessage) : '';
-      if (syncText) {
-        const assistantMessage: Message = {
-          id: generateMessageId(),
-          role: 'assistant',
-          content: normalizeContentToBlocks(syncMessage),
-          timestamp: Date.now(),
-          model: typeof sendResponse?.model === 'string' ? sendResponse.model : undefined,
-        };
-        set((state) => ({
-          messages: [...state.messages, assistantMessage],
+      // Set streaming state BEFORE the await to prevent race condition
+      // where events arrive between the await and the state update.
+      // Also start a stream watchdog — if no events arrive within 30s,
+      // force-exit streaming state so the UI doesn't get stuck.
+      const initialWatchdog = setTimeout(() => {
+        const { isStreaming } = get();
+        if (!isStreaming) return;
+        console.warn('[Chat] Stream watchdog: no events received within 30s');
+        clearStreamTimers(get, set);
+        set({
+          error: 'Stream stalled waiting for gateway events.',
           isStreaming: false,
           streamingMessageId: null,
           streamingBuffer: '',
-        }));
-        return; // Response already received, no need to wait for events
+        });
+      }, 30_000);
+
+      set((state) => ({
+        messages: [...state.messages, userMessage],
+        attachments: [], // Clear attachments after sending
+        isStreaming: true,
+        streamingMessageId: null,
+        streamingBuffer: '',
+        _streamWatchdog: initialWatchdog,
+        _pollFallback: null,
+      }));
+
+      // Send to gateway — chat.send is NON-BLOCKING per the protocol spec.
+      // It returns { runId, status: "started" }. The actual AI response
+      // arrives asynchronously via 'chat' events (delta/final).
+      //
+      // ChatSendParamsSchema fields:
+      //   sessionKey (required), message (required), idempotencyKey (required),
+      //   thinking? (string), deliver? (boolean), attachments? (TUnknown[]),
+      //   timeoutMs? (integer)
+      // NOTE: model is NOT a chat.send param — set it via sessions.patch instead.
+      const { sessionConfig } = get();
+      const { request } = useConnectionStore.getState();
+
+      // Ensure model is applied before sending (sessions.patch is the only way)
+      if (sessionConfig.model) {
+        try {
+          await request('sessions.patch', { key: activeSessionKey, model: sessionConfig.model });
+        } catch (err) {
+          console.warn('[Chat] Failed to patch model before send:', err);
+        }
       }
 
-      // Mark as streaming (assistant response will arrive via events)
-      const prevWatchdog = get()._streamWatchdog;
-      if (prevWatchdog) clearTimeout(prevWatchdog);
+      // Build the gateway attachments array from the UI attachments.
+      // The schema defines: attachments?: TArray<TUnknown>
+      // We use Anthropic-compatible content blocks; the gateway handles
+      // provider-specific translation server-side.
+      const gatewayAttachments: GatewayAttachment[] =
+        allAttachments.length > 0 ? allAttachments.map(toGatewayAttachment) : [];
 
-      // Fallback: if no events arrive within 5s, poll history once
-      // (handles cases where events are lost or model doesn't stream)
-      const pollFallback = setTimeout(async () => {
-        const { isStreaming: stillStreaming, activeSessionKey: key } = get();
-        if (!stillStreaming || !key) return;
-        try {
-          const { useConnectionStore } = await import('./connection');
-          const { request: req } = useConnectionStore.getState();
-          const histResponse = await req<{ messages: unknown[] }>('chat.history', {
-            sessionKey: key,
-            limit: 5,
+      const sendResult = await request<{ runId?: string; status?: string }>('chat.send', {
+        sessionKey: activeSessionKey,
+        message: text,
+        idempotencyKey: crypto.randomUUID(),
+        ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
+        ...(sessionConfig.thinkingLevel && sessionConfig.thinkingLevel !== 'none'
+          ? { thinking: sessionConfig.thinkingLevel }
+          : {}),
+      });
+
+      // Capture runId for deterministic poll correlation
+      if (sendResult.runId) {
+        set({ _activeRunId: sendResult.runId });
+      }
+
+      console.log(
+        '[Chat] chat.send acknowledged:',
+        sendResult,
+        gatewayAttachments.length > 0
+          ? `(${gatewayAttachments.length} attachment(s) sent)`
+          : '(no attachments)'
+      );
+
+      // Response arrives via chat events. As defense-in-depth, poll
+      // history periodically to catch responses if events don't arrive
+      // (e.g. subscription lost, event format changed, etc.).
+      const sessionForPoll = activeSessionKey;
+      const sentAt = Date.now();
+
+      const pollForResponse = async () => {
+        const { activeSessionKey: currentKey, messages: currentMsgs } = get();
+
+        // Stop if session changed
+        if (currentKey !== sessionForPoll) return;
+
+        // Check if we already have a response (from events)
+        const userMsgIdx = currentMsgs.findIndex((m) => m.id === userMessage.id);
+        const hasAssistantAfter =
+          userMsgIdx >= 0 && currentMsgs.slice(userMsgIdx + 1).some((m) => m.role === 'assistant');
+
+        if (hasAssistantAfter) {
+          // Events delivered the response — clean up
+          clearStreamTimers(get, set);
+          set({
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
           });
-          const latest = (histResponse.messages || [])
+          return;
+        }
+
+        // Give up after 30s — reload full history
+        if (Date.now() - sentAt > 30_000) {
+          console.warn('[Chat] Response poll timeout after 30s, reloading history');
+          await get().loadHistory(sessionForPoll);
+          clearStreamTimers(get, set);
+          set({
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
+          });
+          return;
+        }
+
+        // Poll history for a new assistant message.
+        // Strategy: prefer runId metadata match, fall back to positional match
+        // (first assistant message after the user message we sent).
+        try {
+          const { request: req } = useConnectionStore.getState();
+          const activeRunId = get()._activeRunId;
+          const histResp = await req<{ messages: unknown[] }>('chat.history', {
+            sessionKey: sessionForPoll,
+            limit: 50,
+          });
+          const allMsgs = (histResp.messages || [])
             .map((e) => normalizeHistoryEntry(e))
             .filter((m): m is Message => m !== null);
-          const lastAssistant = latest.filter((m) => m.role === 'assistant').pop();
-          if (lastAssistant) {
+
+          // Strategy 1: Match by runId in message metadata (most reliable)
+          let matchedAssistant: Message | undefined;
+          if (activeRunId) {
+            matchedAssistant = allMsgs.find(
+              (m) => m.role === 'assistant' && m.metadata?.runId === activeRunId
+            );
+          }
+
+          // Strategy 2: Positional match — find user message by text,
+          // then take the first assistant message after it.
+          if (!matchedAssistant) {
+            const userIdx = allMsgs.findIndex(
+              (m) =>
+                m.role === 'user' && m.content.some((c) => c.type === 'text' && c.text === text)
+            );
+            if (userIdx >= 0) {
+              matchedAssistant = allMsgs.slice(userIdx + 1).find((m) => m.role === 'assistant');
+            }
+          }
+
+          // Strategy 3: Last resort — most recent assistant with a real timestamp
+          if (!matchedAssistant) {
+            const recentAssistant = allMsgs
+              .filter((m) => m.role === 'assistant' && m.timestamp > 0)
+              .pop();
+            if (recentAssistant && recentAssistant.timestamp >= sentAt - 5_000) {
+              matchedAssistant = recentAssistant;
+            }
+          }
+
+          if (matchedAssistant) {
+            // Found a response — add if not already present
+            clearStreamTimers(get, set);
             set((state) => {
-              // Only add if we don't already have this message
-              const exists = state.messages.some(
-                (m) => m.role === 'assistant' && m.timestamp >= userMessage.timestamp
-              );
-              if (exists) return state;
+              const uidx = state.messages.findIndex((m) => m.id === userMessage.id);
+              const alreadyHas =
+                uidx >= 0 && state.messages.slice(uidx + 1).some((m) => m.role === 'assistant');
+              if (alreadyHas) {
+                return {
+                  isStreaming: false,
+                  streamingMessageId: null,
+                  streamingBuffer: '',
+                };
+              }
               return {
-                messages: [...state.messages, lastAssistant],
+                messages: [...state.messages, matchedAssistant],
                 isStreaming: false,
                 streamingMessageId: null,
                 streamingBuffer: '',
               };
             });
+            console.log('[Chat] Response found via history poll fallback');
+            return;
           }
-        } catch {
-          // Ignore poll errors — events may still arrive
+        } catch (err) {
+          console.warn('[Chat] Poll fallback error:', err);
         }
-      }, 5_000);
 
-      const streamWatchdog = setTimeout(() => {
-        const { isStreaming: isStillStreaming } = get();
-        if (!isStillStreaming) return;
-        // Final attempt: reload history before giving up
-        const key = get().activeSessionKey;
-        if (key) get().loadHistory(key);
-        set({
-          isStreaming: false,
-          streamingMessageId: null,
-          streamingBuffer: '',
-          _streamWatchdog: null,
-          _pollFallback: null,
-        });
-      }, 30_000);
+        // Schedule next poll (3s intervals)
+        const next = setTimeout(pollForResponse, 3_000);
+        set({ _pollFallback: next });
+      };
 
-      set({
-        isStreaming: true,
-        streamingMessageId: null,
-        streamingBuffer: '',
-        _streamWatchdog: streamWatchdog,
-        _pollFallback: pollFallback,
-      });
+      // Start first poll after 3s
+      const firstPoll = setTimeout(pollForResponse, 3_000);
+      set({ _pollFallback: firstPoll });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
-      set({ error: errorMessage, isStreaming: false });
+      clearStreamTimers(get, set);
+      set({
+        error: errorMessage,
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingBuffer: '',
+      });
       console.error('[Chat] Failed to send message:', err);
     }
   },
@@ -568,22 +752,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!activeSessionKey) return;
 
-    const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
+      // ChatAbortParamsSchema: { sessionKey, runId?: string }
+      // No idempotencyKey field in schema — omit it.
       await request('chat.abort', {
         sessionKey: activeSessionKey,
-        idempotencyKey: crypto.randomUUID(),
       });
-      const watchdog = get()._streamWatchdog;
-      if (watchdog) clearTimeout(watchdog);
+      clearStreamTimers(get, set);
       set({
         isStreaming: false,
         streamingMessageId: null,
         streamingBuffer: '',
-        _streamWatchdog: null,
-        _pollFallback: null,
       });
     } catch (err) {
       console.error('[Chat] Failed to abort stream:', err);
@@ -598,16 +779,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
       set({ error: null });
 
+      // ChatInjectParamsSchema: { sessionKey, message: string, label?: string }
+      // NOTE: no idempotencyKey field in the schema — omit it.
       await request('chat.inject', {
         sessionKey: activeSessionKey,
-        content: [{ type: 'text', text }],
-        idempotencyKey: crypto.randomUUID(),
+        message: text,
       });
 
       // Add assistant note to local state
@@ -678,7 +859,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     (async () => {
       try {
-        const { useConnectionStore } = await import('./connection');
         const { request } = useConnectionStore.getState();
         const patch: Record<string, unknown> = {};
         if (config.model !== undefined) patch.model = config.model;
@@ -701,164 +881,104 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!activeSessionKey) return;
 
-    (async () => {
-      const { useConnectionStore } = await import('./connection');
-      const { subscribe } = useConnectionStore.getState();
+    // Subscribe synchronously — no async import race.
+    const { subscribe } = useConnectionStore.getState();
 
-      const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
-        const {
-          activeSessionKey: currentSession,
-          streamingMessageId,
-          streamingBuffer,
-          lastSeq,
-        } = get();
+    const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
+      const {
+        activeSessionKey: currentSession,
+        streamingMessageId,
+        streamingBuffer,
+        lastSeq,
+      } = get();
 
-        // Ignore events from other sessions
-        if (payload.sessionKey !== currentSession) return;
+      // Ignore events from other sessions
+      if (payload.sessionKey !== currentSession) return;
 
-        // ---- Normalize dual event schemas at entry point --------------------
-        // Legacy schema: { delta, done, error, seq, messageId }
-        // Alternate schema: { state, message, errorMessage }
-        // We normalize to a unified internal shape before any further handling.
-        //
-        // If the payload has `delta` or `done` (legacy) but no `state`,
-        // synthesize `state` so the rest of the handler can use a single path.
-        if (payload.state === undefined) {
-          if (payload.error) {
-            (payload as ChatEventPayload).state = 'error';
-          } else if (payload.done) {
-            (payload as ChatEventPayload).state = 'final';
-          } else if (payload.delta !== undefined) {
-            (payload as ChatEventPayload).state = 'delta';
-            // Wrap legacy delta string as a message so extractTextFromEventMessage works
-            if (typeof payload.delta === 'string') {
-              (payload as ChatEventPayload).message = payload.delta;
-            }
+      // ---- Normalize dual event schemas at entry point --------------------
+      // Legacy schema: { delta, done, error, seq, messageId }
+      // Alternate schema: { state, message, errorMessage }
+      // We normalize to a unified internal shape before any further handling.
+      //
+      // If the payload has `delta` or `done` (legacy) but no `state`,
+      // synthesize `state` so the rest of the handler can use a single path.
+      if (payload.state === undefined) {
+        if (payload.error) {
+          (payload as ChatEventPayload).state = 'error';
+        } else if (payload.done) {
+          (payload as ChatEventPayload).state = 'final';
+        } else if (payload.delta !== undefined) {
+          (payload as ChatEventPayload).state = 'delta';
+          // Wrap legacy delta string as a message so extractTextFromEventMessage works
+          if (typeof payload.delta === 'string') {
+            (payload as ChatEventPayload).message = payload.delta;
           }
         }
-        // ---- End normalization ----------------------------------------------
+      }
+      // ---- End normalization ----------------------------------------------
 
-        // Any event for this session means stream is alive — cancel poll fallback
-        // and refresh watchdog.
-        const pollTimer = get()._pollFallback;
-        if (pollTimer) {
-          clearTimeout(pollTimer);
-          set({ _pollFallback: null });
-        }
-        const watchdog = get()._streamWatchdog;
-        if (watchdog) {
-          clearTimeout(watchdog);
-          const nextWatchdog = setTimeout(() => {
-            const { isStreaming } = get();
-            if (!isStreaming) return;
-            set({
-              error: 'Stream stalled waiting for gateway events.',
-              isStreaming: false,
-              streamingMessageId: null,
-              streamingBuffer: '',
-              _streamWatchdog: null,
-              _pollFallback: null,
-            });
-          }, 30_000);
-          set({ _streamWatchdog: nextWatchdog });
-        }
+      // Any event for this session means stream is alive — cancel poll fallback
+      // and refresh watchdog.
+      const pollTimer = get()._pollFallback;
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        set({ _pollFallback: null });
+      }
+      // Reset stream watchdog on every event — if no further events
+      // arrive within 30s, force-exit streaming state.
+      const watchdog = get()._streamWatchdog;
+      if (watchdog) clearTimeout(watchdog);
+      const nextWatchdog = setTimeout(() => {
+        const { isStreaming } = get();
+        if (!isStreaming) return;
+        console.warn('[Chat] Stream watchdog: no events for 30s, force-exiting stream');
+        clearStreamTimers(get, set);
+        set({
+          error: 'Stream stalled waiting for gateway events.',
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+        });
+      }, 30_000);
+      set({ _streamWatchdog: nextWatchdog });
 
-        // Track sequence numbers (if present)
-        if (payload.seq > lastSeq) {
-          set({ lastSeq: payload.seq });
-        }
+      // Track sequence numbers (if present)
+      if (payload.seq > lastSeq) {
+        set({ lastSeq: payload.seq });
+      }
 
-        // Handle error — covers legacy { error: { message } | string } and
-        // alternate { state: 'error', errorMessage } schemas.
-        if (payload.error || payload.state === 'error' || payload.errorMessage) {
-          const rawError = payload.error;
-          const errorMessage =
-            typeof rawError === 'string'
-              ? rawError
-              : rawError && typeof rawError === 'object' && 'message' in rawError
-                ? (rawError as { message: string }).message
-                : payload.errorMessage || 'Chat request failed';
+      // Handle error — covers legacy { error: { message } | string } and
+      // alternate { state: 'error', errorMessage } schemas.
+      if (payload.error || payload.state === 'error' || payload.errorMessage) {
+        const rawError = payload.error;
+        const errorMessage =
+          typeof rawError === 'string'
+            ? rawError
+            : rawError && typeof rawError === 'object' && 'message' in rawError
+              ? (rawError as { message: string }).message
+              : payload.errorMessage || 'Chat request failed';
 
-          const activeWatchdog = get()._streamWatchdog;
-          if (activeWatchdog) clearTimeout(activeWatchdog);
-          set({
-            error: errorMessage,
-            isStreaming: false,
-            streamingMessageId: null,
-            streamingBuffer: '',
-            _streamWatchdog: null,
-            _pollFallback: null,
-          });
-          return;
-        }
+        clearStreamTimers(get, set);
+        set({
+          error: errorMessage,
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+        });
+        return;
+      }
 
-        // Handle alternate gateway schema: final may carry the completed message
-        if (payload.state === 'final') {
-          const finalText = extractTextFromEventMessage(payload.message);
-          if (finalText) {
-            const messageId = streamingMessageId || payload.messageId || generateMessageId();
-            set((state) => {
-              const existingIndex = state.messages.findIndex((m) => m.id === messageId);
-              const updatedMessage: Message = {
-                id: messageId,
-                role: 'assistant',
-                content: [{ type: 'text', text: finalText }],
-                timestamp: Date.now(),
-              };
-
-              if (existingIndex >= 0) {
-                const messages = [...state.messages];
-                messages[existingIndex] = updatedMessage;
-                return { messages };
-              }
-
-              return { messages: [...state.messages, updatedMessage] };
-            });
-          }
-
-          const activeWatchdog = get()._streamWatchdog;
-          if (activeWatchdog) clearTimeout(activeWatchdog);
-          set({
-            isStreaming: false,
-            streamingMessageId: null,
-            streamingBuffer: '',
-            _streamWatchdog: null,
-            _pollFallback: null,
-          });
-          return;
-        }
-
-        // Handle alternate gateway schema: aborted
-        if (payload.state === 'aborted') {
-          const activeWatchdog = get()._streamWatchdog;
-          if (activeWatchdog) clearTimeout(activeWatchdog);
-          set({
-            isStreaming: false,
-            streamingMessageId: null,
-            streamingBuffer: '',
-            _streamWatchdog: null,
-            _pollFallback: null,
-          });
-          return;
-        }
-
-        // Handle alternate gateway schema delta stream
-        if (payload.state === 'delta') {
-          const text = extractTextFromEventMessage(payload.message);
-          const newBuffer = streamingBuffer + text;
+      // Handle alternate gateway schema: final may carry the completed message
+      if (payload.state === 'final') {
+        const finalText = extractTextFromEventMessage(payload.message);
+        if (finalText) {
           const messageId = streamingMessageId || payload.messageId || generateMessageId();
-
-          set({
-            streamingBuffer: newBuffer,
-            streamingMessageId: messageId,
-          });
-
           set((state) => {
             const existingIndex = state.messages.findIndex((m) => m.id === messageId);
             const updatedMessage: Message = {
               id: messageId,
               role: 'assistant',
-              content: [{ type: 'text', text: newBuffer }],
+              content: [{ type: 'text', text: finalText }],
               timestamp: Date.now(),
             };
 
@@ -870,24 +990,70 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
             return { messages: [...state.messages, updatedMessage] };
           });
-          return;
         }
-      });
 
-      set({ eventUnsubscribe: unsub });
-    })();
+        clearStreamTimers(get, set);
+        set({
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+        });
+        return;
+      }
+
+      // Handle alternate gateway schema: aborted
+      if (payload.state === 'aborted') {
+        clearStreamTimers(get, set);
+        set({
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+        });
+        return;
+      }
+
+      // Handle alternate gateway schema delta stream
+      if (payload.state === 'delta') {
+        const text = extractTextFromEventMessage(payload.message);
+        const newBuffer = streamingBuffer + text;
+        const messageId = streamingMessageId || payload.messageId || generateMessageId();
+
+        set({
+          streamingBuffer: newBuffer,
+          streamingMessageId: messageId,
+        });
+
+        set((state) => {
+          const existingIndex = state.messages.findIndex((m) => m.id === messageId);
+          const updatedMessage: Message = {
+            id: messageId,
+            role: 'assistant',
+            content: [{ type: 'text', text: newBuffer }],
+            timestamp: Date.now(),
+          };
+
+          if (existingIndex >= 0) {
+            const messages = [...state.messages];
+            messages[existingIndex] = updatedMessage;
+            return { messages };
+          }
+
+          return { messages: [...state.messages, updatedMessage] };
+        });
+        return;
+      }
+    });
+
+    set({ eventUnsubscribe: unsub });
   },
 
   unsubscribeFromEvents: () => {
     const { eventUnsubscribe } = get();
-    const watchdog = get()._streamWatchdog;
-    if (watchdog) clearTimeout(watchdog);
+    clearStreamTimers(get, set);
     if (eventUnsubscribe) {
       eventUnsubscribe();
-      set({ eventUnsubscribe: null, _streamWatchdog: null });
-      return;
+      set({ eventUnsubscribe: null });
     }
-    set({ _streamWatchdog: null });
   },
 
   reset: () => {
@@ -910,6 +1076,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       eventUnsubscribe: null,
       _streamWatchdog: null,
       _pollFallback: null,
+      _activeRunId: null,
     });
   },
 }));

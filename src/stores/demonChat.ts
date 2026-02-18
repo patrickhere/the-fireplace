@@ -582,12 +582,10 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       return;
     }
 
-    // BUG FIX #5: Use chat.inject (not chat.send) to inject an operator message
-    // into a demon's session without triggering a normal user turn.
+    // ChatInjectParamsSchema: { sessionKey, message: string, label?: string }
     await request('chat.inject', {
       sessionKey: demonSession.key,
-      content: [{ type: 'text', text: message }],
-      idempotencyKey: crypto.randomUUID(),
+      message,
     });
   },
 

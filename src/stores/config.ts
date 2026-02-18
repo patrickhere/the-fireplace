@@ -1,5 +1,11 @@
 // ---------------------------------------------------------------------------
 // Config Store (Zustand)
+//
+// Gateway methods used: config.get, config.schema, config.apply, config.patch
+// NOTE: config.set exists in the protocol registry but is intentionally NOT
+// exposed here. config.apply is the intended write path — it validates the
+// config and provides baseHash-based optimistic concurrency control.
+// config.set would bypass validation and is reserved for internal/CLI use.
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';

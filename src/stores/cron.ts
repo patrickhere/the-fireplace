@@ -8,20 +8,25 @@ import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Types ----------------------------------------------------------------
 
-export interface CronSchedule {
-  kind: 'at' | 'every' | 'cron';
-  at?: string;
-  every?: string;
-  cron?: string;
-  timezone?: string;
-}
+// Gateway CronScheduleSchema: union of { kind:'at', at } | { kind:'every', everyMs, anchorMs? } | { kind:'cron', expr, tz? }
+export type CronSchedule =
+  | { kind: 'at'; at: string }
+  | { kind: 'every'; everyMs: number; anchorMs?: number }
+  | { kind: 'cron'; expr: string; tz?: string };
 
-export interface CronPayload {
-  kind: 'systemEvent' | 'agentTurn';
-  event?: string;
-  message?: string;
-  data?: unknown;
-}
+// Gateway CronPayloadSchema: union of { kind:'systemEvent', text } | { kind:'agentTurn', message, model?, thinking?, ... }
+export type CronPayload =
+  | { kind: 'systemEvent'; text: string }
+  | {
+      kind: 'agentTurn';
+      message: string;
+      model?: string;
+      thinking?: string;
+      timeoutSeconds?: number;
+      deliver?: boolean;
+      channel?: string;
+      to?: string;
+    };
 
 export interface CronJobState {
   nextRunAtMs?: number;
@@ -190,7 +195,8 @@ export const useCronStore = create<CronState>((set, get) => ({
     try {
       set({ error: null });
 
-      await request('cron.update', { id, ...patch });
+      // CronUpdateParamsSchema: { id, patch: { ...fields } }
+      await request('cron.update', { id, patch });
 
       toast.success('Cron job updated');
       // Reload jobs list

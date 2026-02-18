@@ -49,7 +49,7 @@ function shortModel(model: string): string {
 function StatusDot({ state }: { state: DemonStatus['state'] }) {
   const colors: Record<DemonStatus['state'], string> = {
     working: 'bg-emerald-500',
-    idle: 'bg-zinc-400',
+    idle: 'bg-amber-500',
     error: 'bg-red-500',
     offline: 'bg-zinc-700',
   };

@@ -4,7 +4,12 @@
 // Dark amber theme matching The Fireplace design system.
 
 import { Command as CommandPrimitive } from 'cmdk';
-import { forwardRef, type ComponentPropsWithoutRef, type ElementRef, type HTMLAttributes } from 'react';
+import {
+  forwardRef,
+  type ComponentPropsWithoutRef,
+  type ElementRef,
+  type HTMLAttributes,
+} from 'react';
 import { cn } from '@/lib/utils';
 
 // ---- Root -----------------------------------------------------------------

@@ -18,11 +18,11 @@ All 12 build phases complete. App in active use with ongoing bug fixes and polis
 
 ## Key Libraries
 
-- **@noble/ed25519 + @noble/hashes** — device auth crypto (Ed25519 signing, SHA-512)
+- **@tauri-apps/api** — Rust command bridge (`sign_payload`, `get_device_public_key`, `get_device_id`)
 - **@uiw/react-codemirror** — agent file editing (with lang-javascript, lang-json, lang-markdown)
 - **react-markdown + remark-gfm + rehype-highlight + rehype-raw** — markdown rendering with syntax highlighting
 - **cmdk** — command palette (Cmd+K)
-- **@tauri-apps/plugin-store** — persistent key-value storage (device keys, settings)
+- **@tauri-apps/plugin-store** — persistent key-value storage (UI settings only)
 - **@tauri-apps/plugin-updater** — in-app auto-updates
 - **@tauri-apps/plugin-notification** — native OS notifications
 - **react-router-dom v7** — client-side routing
@@ -95,16 +95,12 @@ All 12 build phases complete. App in active use with ongoing bug fixes and polis
 
 ## Learnings
 
-### Ed25519 Configuration (Feb 2026)
+### Ed25519 Rust Migration (Feb 2026)
 
-- **Problem**: `code=4000 reason=hashes.sha512 not set` when connecting to gateway
-- **Root Cause**: @noble/ed25519 v3.x requires explicit SHA-512 configuration for sync operations
-- **Fix**: Install `@noble/hashes` and configure at module init:
-  ```typescript
-  import * as ed25519 from '@noble/ed25519';
-  import { sha512 } from '@noble/hashes/sha512';
-  ed25519.hashes.sha512 = sha512; // Must happen before any ed25519 operations
-  ```
+- Device signing was migrated from JS to Rust/Tauri commands.
+- Private key material is keychain-managed and never exposed to WebView JS.
+- Current client flow uses `invoke('sign_payload')`, `invoke('get_device_public_key')`, and `invoke('get_device_id')`.
+- Do not reintroduce JS-side private key handling.
 
 ### Device Signature Payload (Feb 2026)
 
@@ -132,10 +128,10 @@ All 12 build phases complete. App in active use with ongoing bug fixes and polis
 ### Device Authentication Flow
 
 1. Gateway sends `connect.challenge` with nonce
-2. Client gets deviceId from Ed25519 keypair (SHA-256 hash of public key)
+2. Client gets deviceId via Rust command (`get_device_id`) derived from keychain-backed Ed25519 keypair
 3. Client loads stored device token from keychain (if exists)
 4. Client builds auth payload: `v2|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce`
-5. Client signs payload with Ed25519 private key → base64-url signature
+5. Client signs payload via Rust command (`sign_payload`) → base64-url signature
 6. Client sends `connect` request with device identity (id, publicKey, signature, signedAt, nonce)
 7. Gateway verifies signature and either:
    - Returns device token if pairing approved

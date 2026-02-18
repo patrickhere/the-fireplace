@@ -41,7 +41,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // Leader election via BroadcastChannel
 const LEADER_CHANNEL_NAME = 'fireplace-gateway-leader';
 const LEADER_HEARTBEAT_INTERVAL_MS = 2_000;
-const LEADER_HEARTBEAT_TIMEOUT_MS = 1_200;
+const LEADER_CLAIM_WINDOW_MS = 1_500;
+const LEADER_MISSED_HEARTBEATS_THRESHOLD = 3; // promote after 3 missed heartbeats (~6s)
 const DEFAULT_RECONNECT_MIN_MS = 1_000;
 const DEFAULT_RECONNECT_MAX_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -160,7 +161,10 @@ export class GatewayClient {
   // -- Leader election (BroadcastChannel)
   private _leaderChannel: BroadcastChannel | null = null;
   private _isLeader = false;
+  private _contenderId: string = crypto.randomUUID();
   private _leaderHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private _followerWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private _missedHeartbeats = 0;
   private _beforeUnloadHandler: (() => void) | null = null;
 
   // -- Rate limiter (token bucket)
@@ -403,10 +407,11 @@ export class GatewayClient {
   /**
    * Send an RPC request and wait for the matching response.
    *
-   * For side-effecting methods (chat.send, config.apply, etc.), an idempotency
-   * key is automatically generated if one is not provided in the options.
-   * The key is injected as `idempotencyKey` on the params object (matching the
-   * server schema where it is a top-level required field on the params).
+   * For methods in SIDE_EFFECTING_METHODS (chat.send, node.invoke), an
+   * idempotency key is automatically generated if one is not provided.
+   * The key is injected as `idempotencyKey` on the params object (matching
+   * the server schema where it is a top-level required field on the params).
+   * Other methods use different consistency mechanisms (baseHash, requestId).
    *
    * @param method - The RPC method name (e.g. "sessions.list")
    * @param params - Optional parameters for the method
@@ -1216,16 +1221,19 @@ export class GatewayClient {
   /**
    * Try to claim leadership for this tab/window using BroadcastChannel.
    *
-   * Returns true if this tab can proceed as the leader (i.e. no active
-   * leader was detected). Returns false if another tab is already leading,
-   * in which case we should NOT open a new WebSocket.
+   * Uses deterministic tie-breaking: all contenders broadcast their UUID
+   * during a claim window; the lowest UUID wins. The loser becomes a
+   * follower that watches for leader heartbeats and promotes itself if
+   * the leader disappears (missed heartbeat threshold).
+   *
+   * Returns true if this tab becomes the leader.
+   * Returns false if another tab wins or is already leading.
    *
    * Gracefully returns true when BroadcastChannel is unavailable
    * (older browsers, iOS WKWebView) so the connection always proceeds.
    */
   private async tryClaimLeadership(): Promise<boolean> {
     if (typeof BroadcastChannel === 'undefined') {
-      // Not available — skip leader election and proceed
       return true;
     }
 
@@ -1234,34 +1242,58 @@ export class GatewayClient {
       try {
         channel = new BroadcastChannel(LEADER_CHANNEL_NAME);
       } catch {
-        // BroadcastChannel creation failed — proceed without leader election
         resolve(true);
         return;
       }
 
-      let otherLeaderSeen = false;
+      let existingLeaderSeen = false;
+      const competingIds = new Set<string>([this._contenderId]);
 
       channel.onmessage = (event: MessageEvent) => {
-        const data = event.data as { type?: string };
-        if (data?.type === 'heartbeat') {
-          otherLeaderSeen = true;
+        const data = event.data as { type?: string; id?: string };
+        if (!data?.type) return;
+
+        if (data.type === 'heartbeat') {
+          // An established leader is already running
+          existingLeaderSeen = true;
+        } else if (data.type === 'claim' && data.id && data.id !== this._contenderId) {
+          // Another tab is also trying to claim
+          competingIds.add(data.id);
         }
       };
 
-      // Wait briefly to see if another tab broadcasts a heartbeat
-      const timeout = setTimeout(() => {
+      // Broadcast our claim and a ping to flush existing leaders
+      try {
+        channel.postMessage({ type: 'ping' });
+        channel.postMessage({ type: 'claim', id: this._contenderId });
+      } catch {
         channel.close();
-        if (otherLeaderSeen) {
-          console.warn(
-            '[Gateway] Another tab is already the gateway leader — skipping WebSocket connection'
-          );
+        resolve(true);
+        return;
+      }
+
+      // After the claim window, determine the winner
+      setTimeout(() => {
+        channel.close();
+
+        if (existingLeaderSeen) {
+          // An active leader exists — become follower
+          console.log('[Gateway] Existing leader detected — becoming follower');
+          this.startFollowerWatchdog();
           resolve(false);
-        } else {
-          // We are the leader — keep the channel and start heartbeating
+          return;
+        }
+
+        // Deterministic tie-break: lowest UUID wins
+        const sorted = [...competingIds].sort();
+        const winnerId = sorted[0];
+
+        if (winnerId === this._contenderId) {
+          // We won — become leader
           this._leaderChannel = new BroadcastChannel(LEADER_CHANNEL_NAME);
           this._leaderChannel.onmessage = (leaderEvent: MessageEvent) => {
-            const data = leaderEvent.data as { type?: string };
-            if (data?.type === 'ping') {
+            const msg = leaderEvent.data as { type?: string };
+            if (msg?.type === 'ping' || msg?.type === 'claim') {
               try {
                 this._leaderChannel?.postMessage({ type: 'heartbeat' });
               } catch {
@@ -1272,15 +1304,15 @@ export class GatewayClient {
           this._isLeader = true;
           this.startLeaderHeartbeat();
           this.registerBeforeUnloadHandler();
+          console.log('[Gateway] Won leader election');
           resolve(true);
+        } else {
+          // We lost — become follower
+          console.log('[Gateway] Lost leader election to', winnerId, '— becoming follower');
+          this.startFollowerWatchdog();
+          resolve(false);
         }
-      }, LEADER_HEARTBEAT_TIMEOUT_MS);
-
-      // Announce we are checking — ask existing leaders to reply
-      channel.postMessage({ type: 'ping' });
-
-      // If we receive our own broadcast back, it doesn't count
-      void timeout; // suppress lint
+      }, LEADER_CLAIM_WINDOW_MS);
     });
   }
 
@@ -1304,6 +1336,89 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * Follower watchdog: keep a BroadcastChannel open to watch for leader
+   * heartbeats. If the leader goes silent (missed heartbeat threshold),
+   * promote ourselves to leader and open a WebSocket.
+   */
+  private startFollowerWatchdog(): void {
+    this.stopFollowerWatchdog();
+    this._missedHeartbeats = 0;
+
+    // Open a channel to listen for heartbeats
+    try {
+      this._leaderChannel = new BroadcastChannel(LEADER_CHANNEL_NAME);
+    } catch {
+      return;
+    }
+
+    this._leaderChannel.onmessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string };
+      if (data?.type === 'heartbeat') {
+        this._missedHeartbeats = 0;
+      } else if (data?.type === 'leader-release') {
+        // Leader gracefully released — promote immediately
+        console.log('[Gateway] Leader released — promoting to leader');
+        this.promoteToLeader();
+      }
+    };
+
+    // Check for missed heartbeats at the heartbeat interval
+    this._followerWatchdogTimer = setInterval(() => {
+      this._missedHeartbeats++;
+      if (this._missedHeartbeats >= LEADER_MISSED_HEARTBEATS_THRESHOLD) {
+        console.log(
+          `[Gateway] Leader missed ${this._missedHeartbeats} heartbeats — promoting to leader`
+        );
+        this.promoteToLeader();
+      }
+    }, LEADER_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopFollowerWatchdog(): void {
+    if (this._followerWatchdogTimer !== null) {
+      clearInterval(this._followerWatchdogTimer);
+      this._followerWatchdogTimer = null;
+    }
+    this._missedHeartbeats = 0;
+  }
+
+  /**
+   * Promote from follower to leader: clean up follower state, claim
+   * leadership, and trigger a reconnect with a small jitter to avoid
+   * thundering herd if multiple followers detect the same leader death.
+   */
+  private promoteToLeader(): void {
+    this.stopFollowerWatchdog();
+
+    // Close existing follower channel before opening leader channel
+    if (this._leaderChannel) {
+      try {
+        this._leaderChannel.onmessage = null;
+        this._leaderChannel.close();
+      } catch {
+        /* ignore */
+      }
+      this._leaderChannel = null;
+    }
+
+    // Generate a new contender ID for the next election
+    this._contenderId = crypto.randomUUID();
+
+    // Jitter (0-500ms) to avoid thundering herd
+    const jitter = Math.floor(Math.random() * 500);
+    setTimeout(() => {
+      // Re-run leader election — if another follower already won, we'll defer
+      void this.tryClaimLeadership().then((isLeader) => {
+        if (isLeader) {
+          // We are now the leader — trigger a connect
+          console.log('[Gateway] Promoted to leader — connecting');
+          void this.connect();
+        }
+      });
+    }, jitter);
+  }
+
   private registerBeforeUnloadHandler(): void {
     if (this._beforeUnloadHandler) return;
     this._beforeUnloadHandler = () => {
@@ -1321,6 +1436,7 @@ export class GatewayClient {
 
   private releaseLeadership(): void {
     this.stopLeaderHeartbeat();
+    this.stopFollowerWatchdog();
     if (this._beforeUnloadHandler) {
       window.removeEventListener('beforeunload', this._beforeUnloadHandler);
       this._beforeUnloadHandler = null;

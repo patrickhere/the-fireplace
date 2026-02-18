@@ -92,16 +92,231 @@ const CRON_TEMPLATES: CronTemplate[] = [
   },
 ];
 
+// ---- Cron Expression Validator --------------------------------------------
+
+interface CronFieldSpec {
+  name: string;
+  min: number;
+  max: number;
+  aliases?: Record<string, number>;
+}
+
+const CRON_FIELDS: [CronFieldSpec, CronFieldSpec, CronFieldSpec, CronFieldSpec, CronFieldSpec] = [
+  { name: 'Minute', min: 0, max: 59 },
+  { name: 'Hour', min: 0, max: 23 },
+  { name: 'Day-of-month', min: 1, max: 31 },
+  {
+    name: 'Month',
+    min: 1,
+    max: 12,
+    aliases: {
+      jan: 1,
+      feb: 2,
+      mar: 3,
+      apr: 4,
+      may: 5,
+      jun: 6,
+      jul: 7,
+      aug: 8,
+      sep: 9,
+      oct: 10,
+      nov: 11,
+      dec: 12,
+    },
+  },
+  {
+    name: 'Day-of-week',
+    min: 0,
+    max: 7,
+    aliases: { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 },
+  },
+];
+
+// Resolve a token (number or alias) to a numeric value, or null if unrecognised.
+function resolveValue(token: string, spec: CronFieldSpec): number | null {
+  const lower = token.toLowerCase();
+  if (spec.aliases && Object.prototype.hasOwnProperty.call(spec.aliases, lower)) {
+    return spec.aliases[lower] ?? null;
+  }
+  if (/^\d+$/.test(token)) return parseInt(token, 10);
+  return null;
+}
+
+interface CronValidationResult {
+  error?: string;
+  warning?: string;
+}
+
+// Validate a single cron token against a field spec.
+// Returns { error?, warning? } — warnings are non-blocking.
+function validateCronToken(token: string, spec: CronFieldSpec): CronValidationResult {
+  // Wildcard
+  if (token === '*') return {};
+
+  // Step on wildcard: */N
+  const stepWildcardMatch = /^\*\/(\d+)$/.exec(token);
+  if (stepWildcardMatch) {
+    const stepStr = stepWildcardMatch[1];
+    if (stepStr === undefined)
+      return { error: `${spec.name}: malformed step expression "${token}"` };
+    const step = parseInt(stepStr, 10);
+    if (step === 0) return { error: `${spec.name}: step value cannot be zero` };
+    if (step > spec.max - spec.min) {
+      return {
+        warning: `${spec.name}: step ${step.toString()} exceeds field range (${spec.min.toString()}-${spec.max.toString()})`,
+      };
+    }
+    return {};
+  }
+
+  // Split on commas — each element may be a value, range, or range/step
+  const parts = token.split(',');
+  for (const part of parts) {
+    // Range with optional step: N-M or N-M/S
+    const rangeStepMatch = /^([^/]+)(?:\/(\d+))?$/.exec(part);
+    if (!rangeStepMatch) return { error: `${spec.name}: malformed token "${part}"` };
+
+    const rangePart = rangeStepMatch[1];
+    const stepStr = rangeStepMatch[2];
+
+    if (rangePart === undefined) return { error: `${spec.name}: malformed token "${part}"` };
+
+    if (rangePart.includes('-')) {
+      // Range: N-M
+      const dashParts = rangePart.split('-');
+      if (dashParts.length !== 2) return { error: `${spec.name}: malformed range "${rangePart}"` };
+      const startStr = dashParts[0] ?? '';
+      const endStr = dashParts[1] ?? '';
+
+      const start = resolveValue(startStr, spec);
+      const end = resolveValue(endStr, spec);
+
+      if (start === null)
+        return { error: `${spec.name}: unrecognised value "${startStr}" in range "${rangePart}"` };
+      if (end === null)
+        return { error: `${spec.name}: unrecognised value "${endStr}" in range "${rangePart}"` };
+      if (start < spec.min || start > spec.max)
+        return {
+          error: `${spec.name}: value ${start.toString()} is out of range (${spec.min.toString()}-${spec.max.toString()})`,
+        };
+      if (end < spec.min || end > spec.max)
+        return {
+          error: `${spec.name}: value ${end.toString()} is out of range (${spec.min.toString()}-${spec.max.toString()})`,
+        };
+      if (start > end)
+        return {
+          error: `${spec.name}: range start ${start.toString()} is greater than end ${end.toString()}`,
+        };
+
+      if (stepStr !== undefined) {
+        const step = parseInt(stepStr, 10);
+        if (step === 0) return { error: `${spec.name}: step value cannot be zero` };
+        if (step > end - start) {
+          return {
+            warning: `${spec.name}: step ${step.toString()} exceeds range ${start.toString()}-${end.toString()}`,
+          };
+        }
+      }
+    } else {
+      // Single value with optional step: N or N/S
+      const val = resolveValue(rangePart, spec);
+      if (val === null) return { error: `${spec.name}: unrecognised value "${rangePart}"` };
+      if (val < spec.min || val > spec.max)
+        return {
+          error: `${spec.name}: value ${val.toString()} is out of range (${spec.min.toString()}-${spec.max.toString()})`,
+        };
+
+      if (stepStr !== undefined) {
+        const step = parseInt(stepStr, 10);
+        if (step === 0) return { error: `${spec.name}: step value cannot be zero` };
+      }
+    }
+  }
+
+  return {};
+}
+
+// Validate a cron expression (5-7 fields).
+// The gateway accepts expr as a plain string — no server-side validation endpoint.
+// We lint the first 5 standard fields and treat extra fields as warnings, not errors.
+// Returns { error?, warning? }. Only error is blocking for form submission.
+function validateCronExpression(expr: string): CronValidationResult {
+  const trimmed = expr.trim();
+  if (!trimmed) return { error: 'Cron expression cannot be empty' };
+
+  const fields = trimmed.split(/\s+/);
+  if (fields.length < 5 || fields.length > 7) {
+    return {
+      error: `Expected 5-7 fields (got ${fields.length.toString()}): minute hour day-of-month month day-of-week [seconds] [year]`,
+    };
+  }
+
+  // Collect warnings — report first error immediately, but accumulate non-blocking issues
+  const warnings: string[] = [];
+
+  if (fields.length > 5) {
+    warnings.push(
+      `${fields.length.toString()}-field expression — extra fields will be sent as-is to the backend`
+    );
+  }
+
+  // Validate the standard 5 fields
+  for (let i = 0; i < 5; i++) {
+    const field = fields[i];
+    const spec = CRON_FIELDS[i];
+    if (field === undefined || spec === undefined) continue;
+    const result = validateCronToken(field, spec);
+    if (result.error) return { error: result.error };
+    if (result.warning) warnings.push(result.warning);
+  }
+
+  return warnings.length > 0 ? { warning: warnings.join('; ') } : {};
+}
+
 // ---- Helpers --------------------------------------------------------------
+
+/**
+ * Parse a human-friendly duration string (e.g. "30m", "2h", "1d", "90s", "5000")
+ * into milliseconds. Falls back to treating bare numbers as milliseconds.
+ */
+function parseDurationToMs(input: string): number {
+  const trimmed = input.trim().toLowerCase();
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/.exec(trimmed);
+  if (!match) return 0;
+  const value = parseFloat(match[1] ?? '0');
+  const unit = match[2] ?? 'ms';
+  switch (unit) {
+    case 'ms':
+      return Math.round(value);
+    case 's':
+      return Math.round(value * 1_000);
+    case 'm':
+      return Math.round(value * 60_000);
+    case 'h':
+      return Math.round(value * 3_600_000);
+    case 'd':
+      return Math.round(value * 86_400_000);
+    default:
+      return Math.round(value);
+  }
+}
+
+function formatEveryMs(ms: number): string {
+  if (ms >= 86_400_000 && ms % 86_400_000 === 0) return `${(ms / 86_400_000).toString()}d`;
+  if (ms >= 3_600_000 && ms % 3_600_000 === 0) return `${(ms / 3_600_000).toString()}h`;
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${(ms / 60_000).toString()}m`;
+  if (ms >= 1_000 && ms % 1_000 === 0) return `${(ms / 1_000).toString()}s`;
+  return `${ms.toString()}ms`;
+}
 
 function formatSchedule(schedule: CronSchedule): string {
   switch (schedule.kind) {
     case 'at':
-      return `At ${schedule.at ?? 'unknown'}`;
+      return `At ${schedule.at}`;
     case 'every':
-      return `Every ${schedule.every ?? 'unknown'}`;
+      return `Every ${formatEveryMs(schedule.everyMs)}`;
     case 'cron':
-      return `Cron: ${schedule.cron ?? 'unknown'}`;
+      return `Cron: ${schedule.expr}`;
     default:
       return 'Unknown schedule';
   }
@@ -235,22 +450,6 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
 
 // ---- Add Job Form ---------------------------------------------------------
 
-// Validate a cron expression: 5 or 6 space-separated fields, each matching a valid cron token.
-// Valid token pattern: numbers, ranges (1-5), steps (*/5, 1-5/2), lists (1,2,3), or wildcard (*).
-function validateCronExpression(expr: string): string | null {
-  const fields = expr.trim().split(/\s+/);
-  if (fields.length < 5 || fields.length > 6) {
-    return 'Cron expression must have 5 or 6 fields (e.g. "*/5 * * * *")';
-  }
-  const tokenPattern = /^(\*|\d+(-\d+)?(\/\d+)?)(,(\*|\d+(-\d+)?(\/\d+)?))*$|^\*\/\d+$/;
-  for (const field of fields) {
-    if (!tokenPattern.test(field)) {
-      return `Invalid cron field: "${field}"`;
-    }
-  }
-  return null;
-}
-
 function AddJobForm({
   onSubmit,
   onCancel,
@@ -277,6 +476,7 @@ function AddJobForm({
   const [enabled, setEnabled] = useState(true);
   const [nameError, setNameError] = useState('');
   const [scheduleError, setScheduleError] = useState('');
+  const [scheduleWarning, setScheduleWarning] = useState('');
 
   // Sync initial values when template changes
   useEffect(() => {
@@ -290,6 +490,7 @@ function AddJobForm({
       setAgentId(initialValues.agentId ?? '');
       setNameError('');
       setScheduleError('');
+      setScheduleWarning('');
     }
   }, [initialValues]);
 
@@ -309,30 +510,51 @@ function AddJobForm({
       if (!scheduleValue.trim()) {
         setScheduleError('Schedule value is required');
         valid = false;
-      } else if (scheduleKind === 'cron') {
-        const cronErr = validateCronExpression(scheduleValue);
-        if (cronErr) {
-          setScheduleError(cronErr);
+      } else if (scheduleKind === 'every') {
+        const ms = parseDurationToMs(scheduleValue.trim());
+        if (ms <= 0) {
+          setScheduleError('Invalid interval — use e.g. 30s, 5m, 2h, 1d');
           valid = false;
         } else {
           setScheduleError('');
+          setScheduleWarning('');
+        }
+      } else if (scheduleKind === 'cron') {
+        const cronResult = validateCronExpression(scheduleValue);
+        if (cronResult.error) {
+          setScheduleError(cronResult.error);
+          valid = false;
+        } else {
+          setScheduleError('');
+          setScheduleWarning('');
         }
       } else {
         setScheduleError('');
+        setScheduleWarning('');
       }
 
       if (!valid) return;
 
-      const schedule: CronSchedule = {
-        kind: scheduleKind,
-        [scheduleKind]: scheduleValue.trim(),
-        timezone: timezone.trim() || undefined,
-      };
+      // Build gateway-compliant schedule shape
+      const trimmedValue = scheduleValue.trim();
+      const trimmedTz = timezone.trim() || undefined;
+      let schedule: CronSchedule;
+      if (scheduleKind === 'at') {
+        schedule = { kind: 'at', at: trimmedValue };
+      } else if (scheduleKind === 'every') {
+        schedule = { kind: 'every', everyMs: parseDurationToMs(trimmedValue) };
+      } else {
+        schedule = { kind: 'cron', expr: trimmedValue, ...(trimmedTz ? { tz: trimmedTz } : {}) };
+      }
 
-      const payload: CronPayload = {
-        kind: payloadKind,
-        message: payloadMessage.trim() || undefined,
-      };
+      // Build gateway-compliant payload shape
+      const trimmedMsg = payloadMessage.trim();
+      let payload: CronPayload;
+      if (payloadKind === 'systemEvent') {
+        payload = { kind: 'systemEvent', text: trimmedMsg || '' };
+      } else {
+        payload = { kind: 'agentTurn', message: trimmedMsg || '' };
+      }
 
       onSubmit({
         name: name.trim(),
@@ -431,10 +653,24 @@ function AddJobForm({
             type="text"
             value={scheduleValue}
             onChange={(e) => {
-              setScheduleValue(e.target.value);
-              if (scheduleError) setScheduleError('');
+              const val = e.target.value;
+              setScheduleValue(val);
+              if (scheduleKind === 'cron') {
+                // Live validation: only show error/warning once the user has typed something
+                if (val.trim().length > 0) {
+                  const result = validateCronExpression(val);
+                  setScheduleError(result.error ?? '');
+                  setScheduleWarning(result.warning ?? '');
+                } else {
+                  setScheduleError('');
+                  setScheduleWarning('');
+                }
+              } else if (scheduleError) {
+                setScheduleError('');
+                setScheduleWarning('');
+              }
             }}
-            className={`w-full rounded-md border bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 ${scheduleError ? 'border-red-500' : 'border-zinc-700'}`}
+            className={`w-full rounded-md border bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 ${scheduleError ? 'border-red-500' : scheduleWarning ? 'border-amber-600' : scheduleKind === 'cron' && scheduleValue.trim() && !validateCronExpression(scheduleValue).error ? 'border-emerald-600' : 'border-zinc-700'}`}
             placeholder={
               scheduleKind === 'cron'
                 ? '*/5 * * * *'
@@ -443,7 +679,22 @@ function AddJobForm({
                   : '30m'
             }
           />
+          {scheduleKind === 'cron' && (
+            <p className="mt-1 text-xs text-zinc-600">
+              Standard: minute hour day-of-month month day-of-week (5+ fields accepted)
+            </p>
+          )}
           {scheduleError && <p className="mt-1 text-xs text-red-400">{scheduleError}</p>}
+          {scheduleWarning && !scheduleError && (
+            <p className="mt-1 text-xs text-amber-400">{scheduleWarning}</p>
+          )}
+          {scheduleKind === 'cron' &&
+            scheduleValue.trim() &&
+            !validateCronExpression(scheduleValue).error &&
+            !scheduleError &&
+            !scheduleWarning && (
+              <p className="mt-1 text-xs text-emerald-500">Valid cron expression</p>
+            )}
         </div>
         <div>
           <label className="mb-1 block text-xs text-zinc-500">Timezone</label>

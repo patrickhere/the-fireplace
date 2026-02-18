@@ -104,7 +104,7 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
       </div>
 
       <div className="space-y-3">
-        {/* Model */}
+        {/* Model — transmitted via sessions.patch */}
         <div>
           <label htmlFor="model" className="mb-1 block text-xs text-zinc-400">
             Model
@@ -124,24 +124,7 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
           </select>
         </div>
 
-        {/* Temperature */}
-        <div>
-          <label htmlFor="temperature" className="mb-1 block text-xs text-zinc-400">
-            Temperature: {sessionConfig.temperature?.toFixed(1) || '1.0'}
-          </label>
-          <input
-            type="range"
-            id="temperature"
-            min="0"
-            max="1"
-            step="0.1"
-            value={sessionConfig.temperature || 1.0}
-            onChange={(e) => updateSessionConfig({ temperature: parseFloat(e.target.value) })}
-            className="w-full"
-          />
-        </div>
-
-        {/* Thinking Level */}
+        {/* Thinking Level — transmitted via sessions.patch */}
         <div>
           <label htmlFor="thinking" className="mb-1 block text-xs text-zinc-400">
             Thinking Level
@@ -163,11 +146,45 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
           </select>
         </div>
 
-        {/* Max Tokens */}
+        {/* Divider before local-only controls */}
+        <div className="border-t border-zinc-800 pt-2">
+          <p className="mb-2 text-xs text-zinc-600">
+            The following settings are stored locally only and are not persisted to the gateway.
+          </p>
+        </div>
+
+        {/* Temperature — local only, not transmitted */}
         <div>
-          <label htmlFor="maxTokens" className="mb-1 block text-xs text-zinc-400">
-            Max Tokens
-          </label>
+          <div className="mb-1 flex items-center justify-between">
+            <label htmlFor="temperature" className="text-xs text-zinc-500">
+              Temperature: {sessionConfig.temperature?.toFixed(1) || '1.0'}
+            </label>
+            <span className="rounded bg-zinc-800 px-1 py-0.5 text-xs text-zinc-600">
+              local only
+            </span>
+          </div>
+          <input
+            type="range"
+            id="temperature"
+            min="0"
+            max="1"
+            step="0.1"
+            value={sessionConfig.temperature || 1.0}
+            onChange={(e) => updateSessionConfig({ temperature: parseFloat(e.target.value) })}
+            className="w-full opacity-50"
+          />
+        </div>
+
+        {/* Max Tokens — local only, not transmitted */}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <label htmlFor="maxTokens" className="text-xs text-zinc-500">
+              Max Tokens
+            </label>
+            <span className="rounded bg-zinc-800 px-1 py-0.5 text-xs text-zinc-600">
+              local only
+            </span>
+          </div>
           <input
             type="number"
             id="maxTokens"
@@ -178,7 +195,7 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
               })
             }
             placeholder="Default"
-            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
+            className="w-full rounded-md border border-zinc-800 bg-zinc-950/50 px-2 py-1 text-sm text-zinc-500 placeholder:text-zinc-700 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600/30 focus:outline-none"
           />
         </div>
       </div>
@@ -638,6 +655,7 @@ function MessageInput() {
             <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-400">
               {attachments.length}
             </span>
+            <span className="text-xs text-zinc-600">will be sent to the model</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {attachments.map((att) => (
