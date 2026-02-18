@@ -105,6 +105,7 @@ interface ChatState {
   // -- Event subscription
   eventUnsubscribe: Unsubscribe | null;
   _streamWatchdog: ReturnType<typeof setTimeout> | null;
+  _pollFallback: ReturnType<typeof setTimeout> | null;
 
   // -- Actions
   setActiveSession: (sessionKey: string) => void;
@@ -242,21 +243,59 @@ function normalizeContentBlock(raw: unknown): MessageContent | null {
   return null;
 }
 
+/**
+ * Strip gateway-injected metadata from message text content.
+ * The gateway prepends context like channel status, conversation info,
+ * and system timestamps to user messages. These are useful for the AI
+ * but shouldn't be shown in the chat UI.
+ */
+function stripGatewayMetadata(text: string): string {
+  let cleaned = text;
+  // Remove "System: [timestamp] channel connected/disconnected" lines
+  cleaned = cleaned.replace(
+    /^System:\s*\[[\d\- :A-Z]+\]\s+\S+\s+(gateway\s+)?(connected|disconnected).*\n?/gim,
+    ''
+  );
+  // Remove "Conversation info (untrusted metadata):\n{...}\n" blocks
+  cleaned = cleaned.replace(
+    /^Conversation info\s*\(untrusted metadata\):\s*\n```?\n?\{[\s\S]*?\}\n```?\n?/gim,
+    ''
+  );
+  // Simpler variant without code block
+  cleaned = cleaned.replace(
+    /^Conversation info\s*\(untrusted metadata\):\s*\n\{[\s\S]*?\}\n?/gim,
+    ''
+  );
+  // Remove [[reply_to_current]] markers
+  cleaned = cleaned.replace(/\[\[reply_to_current\]\]/gi, '');
+  // Remove leading/trailing whitespace
+  return cleaned.trim();
+}
+
 function normalizeContentToBlocks(content: unknown): MessageContent[] {
-  // Already a string — wrap as single text block
+  // Already a string — wrap as single text block (strip metadata)
   if (typeof content === 'string') {
-    return [{ type: 'text', text: content }];
+    const cleaned = stripGatewayMetadata(content);
+    return cleaned ? [{ type: 'text', text: cleaned }] : [];
   }
   // Array of content blocks
   if (Array.isArray(content)) {
     const blocks: MessageContent[] = [];
     for (const item of content) {
       if (typeof item === 'string') {
-        blocks.push({ type: 'text', text: item });
+        const cleaned = stripGatewayMetadata(item);
+        if (cleaned) blocks.push({ type: 'text', text: cleaned });
         continue;
       }
       const block = normalizeContentBlock(item);
-      if (block) blocks.push(block);
+      if (block) {
+        // Strip metadata from text blocks
+        if (block.type === 'text' && block.text) {
+          block.text = stripGatewayMetadata(block.text);
+          if (!block.text) continue;
+        }
+        blocks.push(block);
+      }
     }
     return blocks;
   }
@@ -325,6 +364,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   eventUnsubscribe: null,
   _streamWatchdog: null,
+  _pollFallback: null,
 
   setActiveSession: (sessionKey: string) => {
     const { activeSessionKey, unsubscribeFromEvents, subscribeToEvents } = get();
@@ -423,27 +463,89 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments: [], // Clear attachments after sending
       }));
 
-      // Send to gateway (non-blocking, responses come via events)
+      // Send to gateway — response may come via events (streaming) or
+      // directly in the RPC response (non-streaming models like GPT-4.1)
       const { sessionConfig } = get();
-      await request('chat.send', {
+      const sendResponse = await request<Record<string, unknown>>('chat.send', {
         sessionKey: activeSessionKey,
         message: text,
         idempotencyKey: crypto.randomUUID(),
         ...(sessionConfig.model ? { model: sessionConfig.model } : {}),
       });
 
+      // Check if the gateway returned the response synchronously
+      // (non-streaming models return the full response in the RPC result)
+      const syncMessage = sendResponse?.message ?? sendResponse?.response;
+      const syncText = syncMessage ? extractTextFromEventMessage(syncMessage) : '';
+      if (syncText) {
+        const assistantMessage: Message = {
+          id: generateMessageId(),
+          role: 'assistant',
+          content: normalizeContentToBlocks(syncMessage),
+          timestamp: Date.now(),
+          model: typeof sendResponse?.model === 'string' ? sendResponse.model : undefined,
+        };
+        set((state) => ({
+          messages: [...state.messages, assistantMessage],
+          isStreaming: false,
+          streamingMessageId: null,
+          streamingBuffer: '',
+        }));
+        return; // Response already received, no need to wait for events
+      }
+
       // Mark as streaming (assistant response will arrive via events)
       const prevWatchdog = get()._streamWatchdog;
       if (prevWatchdog) clearTimeout(prevWatchdog);
+
+      // Fallback: if no events arrive within 5s, poll history once
+      // (handles cases where events are lost or model doesn't stream)
+      const pollFallback = setTimeout(async () => {
+        const { isStreaming: stillStreaming, activeSessionKey: key } = get();
+        if (!stillStreaming || !key) return;
+        try {
+          const { useConnectionStore } = await import('./connection');
+          const { request: req } = useConnectionStore.getState();
+          const histResponse = await req<{ messages: unknown[] }>('chat.history', {
+            sessionKey: key,
+            limit: 5,
+          });
+          const latest = (histResponse.messages || [])
+            .map((e) => normalizeHistoryEntry(e))
+            .filter((m): m is Message => m !== null);
+          const lastAssistant = latest.filter((m) => m.role === 'assistant').pop();
+          if (lastAssistant) {
+            set((state) => {
+              // Only add if we don't already have this message
+              const exists = state.messages.some(
+                (m) => m.role === 'assistant' && m.timestamp >= userMessage.timestamp
+              );
+              if (exists) return state;
+              return {
+                messages: [...state.messages, lastAssistant],
+                isStreaming: false,
+                streamingMessageId: null,
+                streamingBuffer: '',
+              };
+            });
+          }
+        } catch {
+          // Ignore poll errors — events may still arrive
+        }
+      }, 5_000);
+
       const streamWatchdog = setTimeout(() => {
-        const { isStreaming } = get();
-        if (!isStreaming) return;
+        const { isStreaming: isStillStreaming } = get();
+        if (!isStillStreaming) return;
+        // Final attempt: reload history before giving up
+        const key = get().activeSessionKey;
+        if (key) get().loadHistory(key);
         set({
-          error: 'No response events received from gateway (backend likely failed).',
           isStreaming: false,
           streamingMessageId: null,
           streamingBuffer: '',
           _streamWatchdog: null,
+          _pollFallback: null,
         });
       }, 30_000);
 
@@ -452,6 +554,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMessageId: null,
         streamingBuffer: '',
         _streamWatchdog: streamWatchdog,
+        _pollFallback: pollFallback,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
@@ -480,6 +583,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMessageId: null,
         streamingBuffer: '',
         _streamWatchdog: null,
+        _pollFallback: null,
       });
     } catch (err) {
       console.error('[Chat] Failed to abort stream:', err);
@@ -634,7 +738,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         // ---- End normalization ----------------------------------------------
 
-        // Any event for this session means stream is alive — refresh watchdog.
+        // Any event for this session means stream is alive — cancel poll fallback
+        // and refresh watchdog.
+        const pollTimer = get()._pollFallback;
+        if (pollTimer) {
+          clearTimeout(pollTimer);
+          set({ _pollFallback: null });
+        }
         const watchdog = get()._streamWatchdog;
         if (watchdog) {
           clearTimeout(watchdog);
@@ -647,6 +757,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               streamingMessageId: null,
               streamingBuffer: '',
               _streamWatchdog: null,
+              _pollFallback: null,
             });
           }, 30_000);
           set({ _streamWatchdog: nextWatchdog });
@@ -676,6 +787,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingMessageId: null,
             streamingBuffer: '',
             _streamWatchdog: null,
+            _pollFallback: null,
           });
           return;
         }
@@ -711,6 +823,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingMessageId: null,
             streamingBuffer: '',
             _streamWatchdog: null,
+            _pollFallback: null,
           });
           return;
         }
@@ -724,6 +837,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingMessageId: null,
             streamingBuffer: '',
             _streamWatchdog: null,
+            _pollFallback: null,
           });
           return;
         }
@@ -795,6 +909,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       error: null,
       eventUnsubscribe: null,
       _streamWatchdog: null,
+      _pollFallback: null,
     });
   },
 }));
