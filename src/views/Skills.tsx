@@ -62,7 +62,7 @@ function EnvEditor({
       <div className="text-xs font-medium text-zinc-400">Environment Variables</div>
 
       {entries.map((entry, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={entry.key || i} className="flex items-center gap-2">
           <input
             type="text"
             value={entry.key}
@@ -143,8 +143,11 @@ function SkillCard({ skill }: { skill: SkillStatus }) {
 
   const handleToggle = async () => {
     setIsToggling(true);
-    await updateSkill(skill.key, { enabled: !skill.enabled });
-    setIsToggling(false);
+    try {
+      await updateSkill(skill.key, { enabled: !skill.enabled });
+    } finally {
+      setIsToggling(false);
+    }
   };
 
   const handleEnvSave = (env: Record<string, string>) => {

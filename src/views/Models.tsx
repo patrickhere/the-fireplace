@@ -33,16 +33,25 @@ function formatContextWindow(tokens?: number): string {
 
 // ---- Build demon-to-model reverse map -------------------------------------
 
+/**
+ * Build reverse map: bare model.id → demons using that model.
+ * Strips the "provider/" prefix from agent.model.primary when present so that
+ * the lookup key is consistent with model.id used in isCurrent checks.
+ */
 function buildModelDemonMap(agents: Agent[]): Record<string, Agent[]> {
   const map: Record<string, Agent[]> = {};
   const assignments = getDemonModelAssignments(agents);
   for (const agent of agents) {
     const primaryModel = assignments[agent.id];
     if (!primaryModel) continue;
-    if (!map[primaryModel]) {
-      map[primaryModel] = [];
+    // Normalise: strip "provider/" prefix if present (e.g. "anthropic/claude-sonnet-4-5" → "claude-sonnet-4-5")
+    const bareId = primaryModel.includes('/')
+      ? primaryModel.split('/').slice(1).join('/')
+      : primaryModel;
+    if (!map[bareId]) {
+      map[bareId] = [];
     }
-    map[primaryModel].push(agent);
+    map[bareId].push(agent);
   }
   return map;
 }
@@ -272,7 +281,7 @@ export function Models() {
                       model={model}
                       isCurrent={model.id === currentModelId}
                       onSelect={() => setModel(model.id)}
-                      assignedDemons={modelDemonMap[`${model.provider}/${model.id}`] ?? []}
+                      assignedDemons={modelDemonMap[model.id] ?? []}
                     />
                   ))}
                 </div>

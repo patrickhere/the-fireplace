@@ -7,6 +7,15 @@
 import { useAutoUpdate } from '@/hooks/useAutoUpdate';
 import { usePlatform } from '@/hooks/usePlatform';
 
+async function relaunchApp() {
+  try {
+    const { relaunch } = await import('@tauri-apps/plugin-process');
+    await relaunch();
+  } catch (err) {
+    console.error('[UpdateBanner] Failed to relaunch:', err);
+  }
+}
+
 export function UpdateBanner() {
   const platform = usePlatform();
   const { available, version, downloading, ready, installUpdate } = useAutoUpdate();
@@ -21,6 +30,13 @@ export function UpdateBanner() {
     return (
       <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
         <span className="text-xs text-emerald-400">Update installed. Restart to apply.</span>
+        <button
+          type="button"
+          onClick={() => void relaunchApp()}
+          className="rounded-md bg-emerald-500 px-2 py-0.5 text-xs font-medium text-zinc-950 hover:bg-emerald-400"
+        >
+          Restart Now
+        </button>
       </div>
     );
   }

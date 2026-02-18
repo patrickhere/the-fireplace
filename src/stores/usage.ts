@@ -173,34 +173,65 @@ export const useUsageStore = create<UsageState>((set) => ({
     try {
       set({ isLoading: true, error: null });
 
-      const response = await request<{
-        sessions: Array<{
-          key: string;
-          name?: string;
-          label?: string;
-          model?: string;
-          agentId?: string;
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-          lastActivity?: number;
-          ts?: number;
-        }>;
-      }>('sessions.list', {});
+      // Use sessions.list for metadata and sessions.usage for token counts.
+      // sessions.list does NOT return token data; sessions.usage does.
+      const [listRes, usageRes] = await Promise.all([
+        request<{
+          sessions: Array<{
+            key: string;
+            name?: string;
+            label?: string;
+            derivedTitle?: string;
+            model?: string;
+            agentId?: string;
+            lastActive?: number;
+            ts?: number;
+          }>;
+        }>('sessions.list', { includeDerivedTitles: true }),
+        request<{
+          sessions?: Array<{
+            key?: string;
+            sessionKey?: string;
+            inputTokens?: number;
+            outputTokens?: number;
+            totalTokens?: number;
+          }>;
+        }>('sessions.usage', {}),
+      ]);
 
-      const sessions = response.sessions ?? [];
+      const sessions = listRes.sessions ?? [];
+      const usageSessions = usageRes.sessions ?? [];
+
+      // Build a map of session key -> token data from sessions.usage
+      const usageMap = new Map<
+        string,
+        { inputTokens: number; outputTokens: number; totalTokens: number }
+      >();
+      for (const u of usageSessions) {
+        const key = u.key ?? u.sessionKey;
+        if (key) {
+          usageMap.set(key, {
+            inputTokens: u.inputTokens ?? 0,
+            outputTokens: u.outputTokens ?? 0,
+            totalTokens: u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+          });
+        }
+      }
 
       const sessionUsage: SessionUsageEntry[] = sessions
-        .map((s) => ({
-          sessionKey: s.key,
-          name: s.name ?? s.label ?? s.key,
-          model: s.model ?? 'unknown',
-          agentId: s.agentId ?? '',
-          inputTokens: s.inputTokens ?? 0,
-          outputTokens: s.outputTokens ?? 0,
-          totalTokens: s.totalTokens ?? (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
-          lastActivity: s.lastActivity ?? s.ts ?? 0,
-        }))
+        .map((s) => {
+          const usage = usageMap.get(s.key);
+          return {
+            sessionKey: s.key,
+            name: s.derivedTitle ?? s.name ?? s.label ?? s.key,
+            model: s.model ?? 'unknown',
+            agentId: s.agentId ?? '',
+            inputTokens: usage?.inputTokens ?? 0,
+            outputTokens: usage?.outputTokens ?? 0,
+            totalTokens: usage?.totalTokens ?? 0,
+            lastActivity: s.lastActive ?? s.ts ?? 0,
+          };
+        })
         .sort((a, b) => b.totalTokens - a.totalTokens);
 
       set({ sessionUsage, isLoading: false });
@@ -219,8 +250,9 @@ export const useUsageStore = create<UsageState>((set) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // Load usage, sessions, and agents in parallel
-      const [usageRes, sessionsRes] = await Promise.all([
+      // Load aggregate usage, session list (metadata), and per-session usage in parallel.
+      // sessions.list does NOT return token counts — sessions.usage does.
+      const [usageRes, sessionsRes, perSessionRes] = await Promise.all([
         request<{
           totalInputTokens?: number;
           totalOutputTokens?: number;
@@ -233,30 +265,57 @@ export const useUsageStore = create<UsageState>((set) => ({
             key: string;
             name?: string;
             label?: string;
+            derivedTitle?: string;
             model?: string;
             agentId?: string;
+            lastActive?: number;
+            ts?: number;
+          }>;
+        }>('sessions.list', { includeDerivedTitles: true }),
+        request<{
+          sessions?: Array<{
+            key?: string;
+            sessionKey?: string;
             inputTokens?: number;
             outputTokens?: number;
             totalTokens?: number;
-            lastActivity?: number;
-            ts?: number;
           }>;
-        }>('sessions.list', {}),
+        }>('sessions.usage', {}),
       ]);
 
       const sessions = sessionsRes.sessions ?? [];
+      const perSessionUsage = perSessionRes.sessions ?? [];
+
+      // Build a map of session key -> token data
+      const usageMap = new Map<
+        string,
+        { inputTokens: number; outputTokens: number; totalTokens: number }
+      >();
+      for (const u of perSessionUsage) {
+        const key = u.key ?? u.sessionKey;
+        if (key) {
+          usageMap.set(key, {
+            inputTokens: u.inputTokens ?? 0,
+            outputTokens: u.outputTokens ?? 0,
+            totalTokens: u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+          });
+        }
+      }
 
       const sessionUsage: SessionUsageEntry[] = sessions
-        .map((s) => ({
-          sessionKey: s.key,
-          name: s.name ?? s.label ?? s.key,
-          model: s.model ?? 'unknown',
-          agentId: s.agentId ?? '',
-          inputTokens: s.inputTokens ?? 0,
-          outputTokens: s.outputTokens ?? 0,
-          totalTokens: s.totalTokens ?? (s.inputTokens ?? 0) + (s.outputTokens ?? 0),
-          lastActivity: s.lastActivity ?? s.ts ?? 0,
-        }))
+        .map((s) => {
+          const usage = usageMap.get(s.key);
+          return {
+            sessionKey: s.key,
+            name: s.derivedTitle ?? s.name ?? s.label ?? s.key,
+            model: s.model ?? 'unknown',
+            agentId: s.agentId ?? '',
+            inputTokens: usage?.inputTokens ?? 0,
+            outputTokens: usage?.outputTokens ?? 0,
+            totalTokens: usage?.totalTokens ?? 0,
+            lastActivity: s.lastActive ?? s.ts ?? 0,
+          };
+        })
         .sort((a, b) => b.totalTokens - a.totalTokens);
 
       // Build demon usage and model distribution from session data

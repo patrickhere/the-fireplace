@@ -74,7 +74,7 @@ function SummaryCard({
 const TIER_BAR_COLORS: Record<string, string> = {
   Free: 'bg-emerald-500',
   'MAX Sub': 'bg-amber-500',
-  'Low Cost': 'bg-sky-500',
+  'Low Cost': 'bg-amber-600',
   Premium: 'bg-violet-500',
   Unknown: 'bg-zinc-500',
 };
@@ -82,7 +82,7 @@ const TIER_BAR_COLORS: Record<string, string> = {
 const TIER_DOT_COLORS: Record<string, string> = {
   Free: 'bg-emerald-500',
   'MAX Sub': 'bg-amber-500',
-  'Low Cost': 'bg-sky-500',
+  'Low Cost': 'bg-amber-600',
   Premium: 'bg-violet-500',
   Unknown: 'bg-zinc-500',
 };
@@ -203,7 +203,11 @@ function SessionRow({ session }: { session: SessionUsageEntry }) {
     <tr className="border-b border-zinc-700/50 last:border-0">
       <td className="px-3 py-2">
         <div className="text-sm text-zinc-100">{session.name}</div>
-        <div className="font-mono text-xs text-zinc-500">{session.sessionKey.slice(0, 16)}...</div>
+        <div className="font-mono text-xs text-zinc-500">
+          {session.sessionKey.length > 16
+            ? `${session.sessionKey.slice(0, 16)}...`
+            : session.sessionKey}
+        </div>
       </td>
       <td className="px-3 py-2 text-right">
         <span className="text-sm text-zinc-100">{formatTokens(session.inputTokens)}</span>

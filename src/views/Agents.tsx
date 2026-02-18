@@ -2,7 +2,7 @@
 // Agents View
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useAgentsStore, type Agent } from '@/stores/agents';
 import { useConnectionStore } from '@/stores/connection';
@@ -193,24 +193,22 @@ function CreateAgentModal() {
     const success = await createAgent(name.trim(), workspace.trim(), emoji || undefined);
     if (!success) return;
 
-    // If a template was selected, write the soul file
+    // If a template was selected, write the soul file immediately after creation.
+    // createAgent awaits the gateway response, so the agent exists at this point.
     if (selectedTemplate) {
-      // Small delay to allow agent creation to propagate
-      setTimeout(async () => {
-        try {
-          const { useConnectionStore: getConnStore } = await import('@/stores/connection');
-          const { request } = getConnStore.getState();
-          await request('agents.files.set', {
-            agentId: name,
-            name: 'soul.md',
-            content: selectedTemplate.soulFile,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Failed to write soul file';
-          toast.error(msg);
-          console.error('[Agents] Failed to write soul file from template:', err);
-        }
-      }, 500);
+      try {
+        const { useConnectionStore: getConnStore } = await import('@/stores/connection');
+        const { request } = getConnStore.getState();
+        await request('agents.files.set', {
+          agentId: name,
+          name: 'soul.md',
+          content: selectedTemplate.soulFile,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to write soul file';
+        toast.error(msg);
+        console.error('[Agents] Failed to write soul file from template:', err);
+      }
     }
 
     setName('');
@@ -803,7 +801,10 @@ export function Agents() {
     };
   }, [status, loadAgents, subscribeToEvents, unsubscribeFromEvents]);
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId) || null;
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId]
+  );
 
   return (
     <div className="flex h-full flex-col">

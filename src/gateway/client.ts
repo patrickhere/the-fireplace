@@ -88,13 +88,6 @@ export type StateChangeListener = (
   oldState: GatewayConnectionState
 ) => void;
 
-// ---- Idempotency Cache Entry ----------------------------------------------
-
-interface IdempotencyCacheEntry {
-  key: string;
-  timestamp: number;
-}
-
 // ---- GatewayClient --------------------------------------------------------
 
 export class GatewayClient {
@@ -173,8 +166,8 @@ export class GatewayClient {
   private _rlQueue: Array<() => void> = [];
   private _rlDrainTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // -- Idempotency key tracking
-  private idempotencyCache: IdempotencyCacheEntry[] = [];
+  // -- Idempotency key tracking (Map<key, timestamp> for O(1) lookups)
+  private idempotencyCache = new Map<string, number>();
 
   // ---- Constructor --------------------------------------------------------
 
@@ -301,13 +294,15 @@ export class GatewayClient {
    * Rejects if the WebSocket fails to open or the handshake times out.
    */
   async connect(urlOverride?: string): Promise<void> {
-    if (
-      this._state === 'connected' ||
-      this._state === 'connecting' ||
-      this._state === 'authenticating'
-    ) {
-      console.warn('[Gateway] Already connected or connecting -- ignoring connect()');
+    if (this._state === 'connected') {
+      console.warn('[Gateway] Already connected -- ignoring connect()');
       return;
+    }
+    if (this._state === 'connecting' || this._state === 'authenticating') {
+      throw new Error(
+        `Connection already in progress (state="${this._state}"). ` +
+          'Wait for the current connect() to resolve or call disconnect() first.'
+      );
     }
 
     this.intentionalClose = false;
@@ -355,7 +350,11 @@ export class GatewayClient {
       };
 
       this.ws.onmessage = (event: MessageEvent) => {
-        this.handleMessage(event.data as string);
+        if (typeof event.data !== 'string') {
+          console.warn('[Gateway] Ignoring non-string WebSocket message:', typeof event.data);
+          return;
+        }
+        this.handleMessage(event.data);
       };
 
       this.ws.onerror = (_event: Event) => {
@@ -461,13 +460,16 @@ export class GatewayClient {
     }
 
     return new Promise<T>((resolve, reject) => {
+      const signal = options?.signal;
+
       // Handle external abort
-      if (options?.signal) {
-        if (options.signal.aborted) {
+      let onAbort: (() => void) | null = null;
+      if (signal) {
+        if (signal.aborted) {
           reject(new Error(`Request aborted: ${method}`));
           return;
         }
-        const onAbort = () => {
+        onAbort = () => {
           const pending = this.pendingRequests.get(frame.id);
           if (pending) {
             clearTimeout(pending.timer);
@@ -475,18 +477,32 @@ export class GatewayClient {
             reject(new Error(`Request aborted: ${method}`));
           }
         };
-        options.signal.addEventListener('abort', onAbort, { once: true });
+        signal.addEventListener('abort', onAbort, { once: true });
       }
 
+      // Helper to clean up the abort listener when the request settles normally
+      const cleanupAbortListener = () => {
+        if (signal && onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
+      };
+
       const timer = setTimeout(() => {
+        cleanupAbortListener();
         this.pendingRequests.delete(frame.id);
         reject(new Error(`Request timeout after ${timeoutMs}ms: ${method} (id=${frame.id})`));
       }, timeoutMs);
 
       this.pendingRequests.set(frame.id, {
         method,
-        resolve: resolve as (payload: unknown) => void,
-        reject,
+        resolve: (payload: unknown) => {
+          cleanupAbortListener();
+          (resolve as (value: unknown) => void)(payload);
+        },
+        reject: (err: Error) => {
+          cleanupAbortListener();
+          reject(err);
+        },
         timer,
       });
 
@@ -694,15 +710,25 @@ export class GatewayClient {
     // Get device ID first (needed to look up stored token)
     const deviceId = await getDeviceId();
 
+    // Check connection is still alive after async invoke
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Connection closed during authentication (after getDeviceId)');
+    }
+
     // Try to retrieve stored device token from keychain
     let authToken: string | undefined;
     try {
       const storedToken = await retrieveDeviceToken(deviceId, this.config.url);
       authToken = storedToken.token;
       console.log('[Gateway] Using stored device token from keychain');
-    } catch (err) {
+    } catch {
       // Token not found or keychain access failed -- proceed without token
       console.log('[Gateway] No stored device token found, proceeding with device pairing');
+    }
+
+    // Check connection is still alive after async keychain access
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Connection closed during authentication (after retrieveDeviceToken)');
     }
 
     // Build device identity with all parameters (including token for signature)
@@ -712,8 +738,14 @@ export class GatewayClient {
       this.config.clientInfo,
       'operator',
       scopes,
-      authToken
+      authToken,
+      deviceId
     );
+
+    // Check connection is still alive after async signing
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Connection closed during authentication (after buildDeviceIdentity)');
+    }
 
     const connectParams = buildConnectParams(this.config.clientInfo, device, scopes, authToken);
 
@@ -875,11 +907,19 @@ export class GatewayClient {
         );
         this.stopWatchdog();
         this.removeVisibilityListener();
-        // Close the socket; handleClose will schedule reconnect
+        // Mark intentional so handleClose skips redundant cleanup
+        this.intentionalClose = true;
+        // Proactively clean up before closing the socket
+        this.releaseLeadership();
+        this.rejectAllPending(new Error('Tick watchdog timeout'));
         if (this.ws) {
-          this.ws.close(4001, 'Tick watchdog timeout');
+          const sock = this.ws;
           this.ws = null;
+          sock.close(4001, 'Tick watchdog timeout');
         }
+        this.setState('reconnecting');
+        this.intentionalClose = false;
+        this.scheduleReconnect();
       }
     }, WATCHDOG_POLL_INTERVAL_MS);
   }
@@ -909,13 +949,16 @@ export class GatewayClient {
         );
         this.stopWatchdog();
         this.removeVisibilityListener();
+        this.releaseLeadership();
+        this.rejectAllPending(new Error('Connection stale after visibility resume'));
         if (this.ws) {
-          this.ws.close(4002, 'Visibility resume reconnect');
+          this.intentionalClose = true;
+          const sock = this.ws;
           this.ws = null;
-        } else {
-          // Not connected at all — trigger reconnect path directly
-          this.scheduleReconnect();
+          sock.close(4002, 'Visibility resume reconnect');
+          this.intentionalClose = false;
         }
+        this.scheduleReconnect();
       } else {
         console.log('[Gateway] Visibility resumed — connection still healthy');
       }
@@ -998,8 +1041,17 @@ export class GatewayClient {
           this.request('agents.list').catch(() => null),
         ]);
 
+        // If both requests failed, log a warning and skip the synthetic event
+        if (sessions === null && agents === null) {
+          console.warn(
+            '[Gateway] State refresh failed: both sessions.list and agents.list returned errors'
+          );
+          return;
+        }
+
         // Emit a synthetic event so stores can pick up refreshed data
-        const synthFrame = {
+        const synthFrame: EventFrame = {
+          type: 'event' as const,
           event: 'state.refresh',
           payload: { sessions, agents },
         };
@@ -1015,7 +1067,7 @@ export class GatewayClient {
         }
         for (const h of this.wildcardHandlers) {
           try {
-            h(synthFrame as EventFrame);
+            h(synthFrame);
           } catch {
             /* ignore */
           }
@@ -1075,6 +1127,19 @@ export class GatewayClient {
   // ---- Internals: Close & Reconnect --------------------------------------
 
   private handleClose(_event: CloseEvent): void {
+    // Guard: if ws is already null, cleanup was handled elsewhere (e.g. watchdog)
+    if (!this.ws) {
+      // Still transition to disconnected if this was an intentional close
+      // that hasn't been handled yet
+      if (
+        this.intentionalClose &&
+        this._state !== 'disconnected' &&
+        this._state !== 'reconnecting'
+      ) {
+        this.setState('disconnected');
+      }
+      return;
+    }
     this.ws = null;
     this.releaseLeadership();
 
@@ -1156,26 +1221,39 @@ export class GatewayClient {
     const now = Date.now();
 
     // Evict expired entries
-    this.idempotencyCache = this.idempotencyCache.filter(
-      (entry) => now - entry.timestamp < IDEMPOTENCY_CACHE_TTL_MS
-    );
-
-    // Evict oldest if at capacity
-    if (this.idempotencyCache.length >= IDEMPOTENCY_CACHE_MAX) {
-      this.idempotencyCache.splice(0, this.idempotencyCache.length - IDEMPOTENCY_CACHE_MAX + 1);
+    if (this.idempotencyCache.size >= IDEMPOTENCY_CACHE_MAX) {
+      for (const [k, ts] of this.idempotencyCache) {
+        if (now - ts >= IDEMPOTENCY_CACHE_TTL_MS) {
+          this.idempotencyCache.delete(k);
+        }
+      }
     }
 
-    this.idempotencyCache.push({ key, timestamp: now });
+    // If still at capacity after TTL eviction, remove oldest entries
+    if (this.idempotencyCache.size >= IDEMPOTENCY_CACHE_MAX) {
+      const excess = this.idempotencyCache.size - IDEMPOTENCY_CACHE_MAX + 1;
+      let removed = 0;
+      for (const k of this.idempotencyCache.keys()) {
+        if (removed >= excess) break;
+        this.idempotencyCache.delete(k);
+        removed++;
+      }
+    }
+
+    this.idempotencyCache.set(key, now);
   }
 
   /**
    * Check if an idempotency key has been used recently.
    */
   private hasIdempotencyKey(key: string): boolean {
-    const now = Date.now();
-    return this.idempotencyCache.some(
-      (entry) => entry.key === key && now - entry.timestamp < IDEMPOTENCY_CACHE_TTL_MS
-    );
+    const ts = this.idempotencyCache.get(key);
+    if (ts === undefined) return false;
+    if (Date.now() - ts >= IDEMPOTENCY_CACHE_TTL_MS) {
+      this.idempotencyCache.delete(key);
+      return false;
+    }
+    return true;
   }
 
   // ---- Internals: Cleanup -------------------------------------------------
@@ -1475,7 +1553,7 @@ export class GatewayClient {
     this.eventHandlers.clear();
     this.wildcardHandlers.clear();
     this.stateListeners.clear();
-    this.idempotencyCache = [];
+    this.idempotencyCache.clear();
     this._snapshot = null;
   }
 }

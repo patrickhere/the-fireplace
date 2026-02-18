@@ -86,6 +86,7 @@ function LogLine({ line, index }: { line: string; index: number }) {
 function LogsTab() {
   const {
     lines,
+    cursor,
     fileName,
     fileSize,
     isLoading,
@@ -227,7 +228,9 @@ function LogsTab() {
             detail={isTailing ? undefined : 'Click "Start Tailing" to begin streaming logs.'}
           />
         ) : (
-          lines.map((line, index) => <LogLine key={index} line={line} index={index} />)
+          lines.map((line, index) => (
+            <LogLine key={`log-${cursor}-${index}`} line={line} index={index} />
+          ))
         )}
       </div>
     </div>

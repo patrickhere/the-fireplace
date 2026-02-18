@@ -177,9 +177,16 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
       unsub();
     }
 
+    // Mark as subscribing to prevent duplicate async subscriptions
+    const sentinel: Unsubscribe = () => {};
+    set({ eventUnsubscribes: [sentinel] });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { subscribe } = useConnectionStore.getState();
+
+      // If another call replaced our sentinel, abort
+      if (!get().eventUnsubscribes.includes(sentinel)) return;
 
       const unsub1 = subscribe<DevicePairRequest>('device.pair.requested', (payload) => {
         console.log('[Devices] Pair request received:', payload);

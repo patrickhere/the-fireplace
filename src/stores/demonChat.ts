@@ -33,6 +33,8 @@ interface DemonChatState {
   _connUnsub: Unsubscribe | null;
   _agentsUnsub: Unsubscribe | null;
   _cronPoll: ReturnType<typeof setInterval> | null;
+  /** Guard against double-injection: { demonId, text, ts } of the last inject call. */
+  _lastInject: { demonId: string; text: string; ts: number } | null;
 
   // Actions
   startListening: () => void;
@@ -47,11 +49,12 @@ interface DemonChatState {
 // ---- Constants ------------------------------------------------------------
 
 const MAX_MESSAGES = 500;
+const INJECT_DEBOUNCE_MS = 2000;
 
 // ---- Helpers --------------------------------------------------------------
 
 function generateId(): string {
-  return `dcm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `dcm_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
 function extractTextFromEventMessage(message: unknown): string {
@@ -139,6 +142,7 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   _connUnsub: null,
   _agentsUnsub: null,
   _cronPoll: null,
+  _lastInject: null,
 
   startListening: () => {
     const { isListening } = get();
@@ -559,6 +563,20 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   },
 
   injectMessage: async (demonId: string, message: string) => {
+    // Guard against double-injection: reject if same demonId+text within debounce window
+    const { _lastInject } = get();
+    const now = Date.now();
+    if (
+      _lastInject &&
+      _lastInject.demonId === demonId &&
+      _lastInject.text === message &&
+      now - _lastInject.ts < INJECT_DEBOUNCE_MS
+    ) {
+      console.warn('[DemonChat] Duplicate injection suppressed within debounce window');
+      return;
+    }
+    set({ _lastInject: { demonId, text: message, ts: now } });
+
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 

@@ -112,11 +112,20 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
   loadAgents: async (forceRefresh = false) => {
     const { lastFetchedAt } = get();
-    if (!forceRefresh && lastFetchedAt !== null && Date.now() - lastFetchedAt < AGENTS_TTL_MS) {
+    const { useConnectionStore } = await import('./connection');
+
+    // Bypass TTL cache if we haven't connected since the last fetch — status
+    // may have changed (reconnect) and data could be stale.
+    const connectionStatus = useConnectionStore.getState().status;
+    const cacheValid =
+      !forceRefresh &&
+      lastFetchedAt !== null &&
+      Date.now() - lastFetchedAt < AGENTS_TTL_MS &&
+      connectionStatus === 'connected';
+    if (cacheValid) {
       return;
     }
 
-    const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
     try {
@@ -336,9 +345,16 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       eventUnsubscribe();
     }
 
+    // Mark as subscribing to prevent duplicate async subscriptions
+    const sentinel: Unsubscribe = () => {};
+    set({ eventUnsubscribe: sentinel });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { subscribe } = useConnectionStore.getState();
+
+      // If another call replaced our sentinel, abort
+      if (get().eventUnsubscribe !== sentinel) return;
 
       const unsub = subscribe<AgentEventPayload>('agent', (payload) => {
         console.log('[Agents] Event received:', payload);

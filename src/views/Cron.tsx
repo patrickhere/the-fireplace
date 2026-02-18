@@ -411,8 +411,8 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-zinc-700 text-left text-zinc-500">
-            <th className="pr-3 pb-1 font-medium">Run ID</th>
-            <th className="pr-3 pb-1 font-medium">Started</th>
+            <th className="pr-3 pb-1 font-medium">Session</th>
+            <th className="pr-3 pb-1 font-medium">Run At</th>
             <th className="pr-3 pb-1 font-medium">Duration</th>
             <th className="pr-3 pb-1 font-medium">Status</th>
             <th className="pb-1 font-medium">Error</th>
@@ -421,14 +421,14 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
         <tbody>
           {runs.map((run) => (
             <tr
-              key={run.runId ?? run.sessionId ?? `${run.jobId}-${run.runAtMs ?? run.ts ?? 0}`}
+              key={run.sessionId ?? `${run.jobId}-${run.runAtMs ?? run.ts ?? 0}`}
               className="border-b border-zinc-800"
             >
               <td className="py-1.5 pr-3 font-mono text-zinc-400">
-                {(run.runId ?? run.sessionId ?? '--').slice(0, 8)}
+                {(run.sessionId ?? '--').slice(0, 8)}
               </td>
               <td className="py-1.5 pr-3 text-zinc-400">
-                {new Date(run.startedAtMs ?? run.runAtMs ?? run.ts ?? Date.now()).toLocaleString()}
+                {new Date(run.runAtMs ?? run.ts ?? Date.now()).toLocaleString()}
               </td>
               <td className="py-1.5 pr-3 text-zinc-400">
                 {run.durationMs !== undefined ? `${run.durationMs}ms` : '--'}
@@ -1040,7 +1040,7 @@ function QuickCreateDropdown({ onSelect }: { onSelect: (template: CronTemplate) 
 // ---- Main Cron View -------------------------------------------------------
 
 export function Cron() {
-  const { jobs, isLoading, error, loadJobs } = useCronStore();
+  const { jobs, isLoading, error, loadJobs, addJob } = useCronStore();
   const { agents, loadAgents } = useAgentsStore();
   const { status, request } = useConnectionStore();
 
@@ -1132,12 +1132,14 @@ export function Cron() {
     }
   }, [status, loadJobs, loadAgents]);
 
-  const handleAddJob = useCallback(async (params: CronAddParams) => {
-    const { addJob } = useCronStore.getState();
-    await addJob(params);
-    setShowAddForm(false);
-    setTemplateValues(undefined);
-  }, []);
+  const handleAddJob = useCallback(
+    async (params: CronAddParams) => {
+      await addJob(params);
+      setShowAddForm(false);
+      setTemplateValues(undefined);
+    },
+    [addJob]
+  );
 
   const handleQuickCreate = useCallback((template: CronTemplate) => {
     setTemplateValues(template);
@@ -1171,7 +1173,7 @@ export function Cron() {
     };
 
     const ok1 = await runStep(
-      "/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call channels.status --json --params '{}'",
+      "openclaw gateway call channels.status --json --params '{}'",
       'channels.status',
       {}
     );
@@ -1183,10 +1185,6 @@ export function Cron() {
     // Dynamically find a pulse/demon cron job from the loaded jobs list
     // instead of relying on a hardcoded UUID.
     const pulseJob = jobs.find((j) => {
-      const tags = (j as CronJob & { tags?: string[] }).tags ?? [];
-      if (tags.some((t) => t === 'demon-pulse' || t === 'demon_pulse' || t === 'pulse')) {
-        return true;
-      }
       if (j.payload?.kind === 'agentTurn' && Boolean(j.agentId)) {
         return true;
       }
@@ -1207,7 +1205,7 @@ export function Cron() {
     }
 
     const ok2 = await runStep(
-      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.run --json --params '{"id":"${pulseJob.id}"}'`,
+      `openclaw gateway call cron.run --json --params '{"id":"${pulseJob.id}"}'`,
       'cron.run',
       { id: pulseJob.id }
     );
@@ -1217,7 +1215,7 @@ export function Cron() {
     }
 
     await runStep(
-      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.runs --json --params '{"id":"${pulseJob.id}","limit":10}'`,
+      `openclaw gateway call cron.runs --json --params '{"id":"${pulseJob.id}","limit":10}'`,
       'cron.runs',
       { id: pulseJob.id, limit: 10 }
     );

@@ -56,14 +56,33 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
+      // ModelsListResultSchema only has { models: [...] } — no `current` field.
+      // Derive the current model from the connection snapshot's session defaults.
       const response = await request<{
         models: ModelChoice[];
-        current?: string;
       }>('models.list', {});
+
+      // Derive the current model by fetching the main session
+      const { useConnectionStore: connStore } = await import('./connection');
+      const { snapshot, request: req2 } = connStore.getState();
+      let currentModel: string | null = null;
+
+      const mainKey = snapshot?.sessionDefaults?.mainSessionKey ?? 'main';
+      try {
+        const sessRes = await req2<{
+          sessions: Array<{ key: string; model?: string }>;
+        }>('sessions.list', { limit: 50 });
+        const mainSession = (sessRes.sessions ?? []).find((s) => s.key === mainKey);
+        if (mainSession?.model) {
+          currentModel = mainSession.model;
+        }
+      } catch {
+        // Non-critical — just won't highlight the current model
+      }
 
       set({
         models: response.models ?? [],
-        currentModelId: response.current ?? null,
+        currentModelId: currentModel,
         isLoading: false,
         lastFetchedAt: Date.now(),
       });

@@ -88,6 +88,10 @@ interface SessionsState {
 
   // Event subscription
   eventUnsubscribe: Unsubscribe | null;
+  _reloadTimer: ReturnType<typeof setTimeout> | null;
+
+  // Internal helpers
+  _scheduledReload: () => void;
 
   // Actions
   loadSessions: () => Promise<void>;
@@ -122,6 +126,17 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
   showConfigModal: false,
   showUsageModal: false,
   eventUnsubscribe: null,
+  _reloadTimer: null,
+
+  _scheduledReload: () => {
+    const { _reloadTimer } = get();
+    if (_reloadTimer) clearTimeout(_reloadTimer);
+    const timer = setTimeout(() => {
+      get().loadSessions();
+      set({ _reloadTimer: null });
+    }, 500);
+    set({ _reloadTimer: timer });
+  },
 
   loadSessions: async () => {
     const { useConnectionStore } = await import('./connection');
@@ -165,13 +180,28 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     try {
       set({ error: null });
 
-      const response = await request<SessionPreview>('sessions.preview', {
+      const response = await request<
+        SessionPreview | { sessions?: SessionPreview[]; previews?: SessionPreview[] }
+      >('sessions.preview', {
         keys: [key],
         limit: 100,
         maxChars: 50000,
       });
 
-      set({ selectedSession: response, showPreviewModal: true });
+      // sessions.preview returns an array result — unwrap defensively
+      let preview: SessionPreview | null = null;
+      if (response && typeof response === 'object') {
+        if ('sessions' in response && Array.isArray(response.sessions)) {
+          preview = response.sessions.find((s) => s.key === key) ?? response.sessions[0] ?? null;
+        } else if ('previews' in response && Array.isArray(response.previews)) {
+          preview = response.previews.find((s) => s.key === key) ?? response.previews[0] ?? null;
+        } else if ('key' in response) {
+          // Already a direct SessionPreview shape
+          preview = response as SessionPreview;
+        }
+      }
+
+      set({ selectedSession: preview, showPreviewModal: true });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to preview session';
       set({ error: errorMessage });
@@ -330,9 +360,9 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
       const unsub = subscribe<SessionEventPayload>('session', (payload) => {
         console.log('[Sessions] Event received:', payload);
 
-        // Reload sessions on any session event
+        // Debounced reload — prevents burst requests when many session events arrive quickly
         if (['created', 'updated', 'deleted', 'reset'].includes(payload.type)) {
-          get().loadSessions();
+          get()._scheduledReload();
         }
       });
 
@@ -349,8 +379,9 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
   },
 
   reset: () => {
-    const { unsubscribeFromEvents } = get();
+    const { unsubscribeFromEvents, _reloadTimer } = get();
     unsubscribeFromEvents();
+    if (_reloadTimer) clearTimeout(_reloadTimer);
     set({
       sessions: [],
       selectedSession: null,
@@ -363,6 +394,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
       showConfigModal: false,
       showUsageModal: false,
       eventUnsubscribe: null,
+      _reloadTimer: null,
     });
   },
 }));

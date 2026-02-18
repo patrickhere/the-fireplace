@@ -57,19 +57,26 @@ export function useNotifications(): UseNotificationsReturn {
     }
   }, []);
 
-  const notify = useCallback(async (options: NotificationOptions): Promise<void> => {
-    try {
-      // Use Tauri command for richer control
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('send_notification', {
-        title: options.title,
-        body: options.body,
-        urgency: options.urgency ?? 'normal',
-      });
-    } catch (err) {
-      console.warn('[Notifications] Failed to send notification:', err);
-    }
-  }, []);
+  const notify = useCallback(
+    async (options: NotificationOptions): Promise<void> => {
+      if (!permitted) {
+        console.warn('[Notifications] Not permitted');
+        return;
+      }
+      try {
+        // Use Tauri command for richer control
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('send_notification', {
+          title: options.title,
+          body: options.body,
+          urgency: options.urgency ?? 'normal',
+        });
+      } catch (err) {
+        console.warn('[Notifications] Failed to send notification:', err);
+      }
+    },
+    [permitted]
+  );
 
   return { permitted, requestPermission, notify };
 }

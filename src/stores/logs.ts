@@ -4,6 +4,10 @@
 
 import { create } from 'zustand';
 
+// ---- Constants ------------------------------------------------------------
+
+const MAX_LINES = 10_000;
+
 // ---- Types ----------------------------------------------------------------
 
 export interface LogsTailResponse {
@@ -90,9 +94,9 @@ export const useLogsStore = create<LogsState>((set, get) => ({
           isLoading: false,
         });
       } else {
-        // Append new lines
+        // Append new lines, capped to MAX_LINES
         set((state) => ({
-          lines: [...state.lines, ...response.lines],
+          lines: [...state.lines, ...response.lines].slice(-MAX_LINES),
           cursor: response.cursor,
           fileName: response.file,
           fileSize: response.size,
@@ -107,7 +111,7 @@ export const useLogsStore = create<LogsState>((set, get) => ({
   },
 
   startTailing: () => {
-    const { tailInterval, fetchLogs } = get();
+    const { tailInterval } = get();
 
     // Clear existing interval
     if (tailInterval) {
@@ -115,10 +119,10 @@ export const useLogsStore = create<LogsState>((set, get) => ({
     }
 
     // Fetch immediately, then poll every 2s
-    fetchLogs();
+    get().fetchLogs();
 
     const interval = setInterval(() => {
-      fetchLogs();
+      get().fetchLogs();
     }, 2000);
 
     set({ isTailing: true, tailInterval: interval });

@@ -41,7 +41,7 @@ function SessionPreviewModal() {
         <div className="space-y-3 overflow-y-auto p-4" style={{ maxHeight: 'calc(90vh - 100px)' }}>
           {selectedSession.messages.map((msg, idx) => (
             <div
-              key={idx}
+              key={`msg-${msg.timestamp}-${msg.role}-${idx}`}
               className={`rounded-lg p-3 ${
                 msg.role === 'user'
                   ? 'border border-amber-500/20 bg-amber-500/10'
@@ -71,6 +71,7 @@ function SessionConfigModal() {
   const { status } = useConnectionStore();
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [config, setConfig] = useState<Partial<SessionConfig>>({});
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (showConfigModal && sessions.length > 0 && !selectedKey) {
@@ -87,10 +88,15 @@ function SessionConfigModal() {
   if (!showConfigModal) return null;
 
   const handleSave = async () => {
-    if (!selectedKey) return;
-    await patchSession(selectedKey, config);
-    setShowConfigModal(false);
-    setConfig({});
+    if (!selectedKey || isSaving) return;
+    setIsSaving(true);
+    try {
+      await patchSession(selectedKey, config);
+      setShowConfigModal(false);
+      setConfig({});
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -218,10 +224,11 @@ function SessionConfigModal() {
           </button>
           <button
             onClick={handleSave}
-            className="rounded-md bg-amber-500 px-4 py-2 text-sm text-zinc-950 hover:bg-amber-400"
+            disabled={isSaving}
+            className="rounded-md bg-amber-500 px-4 py-2 text-sm text-zinc-950 hover:bg-amber-400 disabled:opacity-50"
             type="button"
           >
-            Save Changes
+            {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </div>
@@ -285,7 +292,10 @@ function SessionUsageModal() {
           <div className="space-y-2">
             <h3 className="text-sm font-semibold text-zinc-100">Sessions</h3>
             {usageStats.sessions.map((session, idx) => (
-              <div key={idx} className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
+              <div
+                key={`usage-${session.key}-${idx}`}
+                className="rounded-lg border border-zinc-700 bg-zinc-800 p-3"
+              >
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-sm font-medium text-zinc-100">
                     {formatSessionKey(session.key)}
@@ -326,10 +336,22 @@ function SessionRow({
 }) {
   const { previewSession, resetSession, deleteSession, compactSession } = useSessionsStore();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showCompactConfirm, setShowCompactConfirm] = useState(false);
 
   const handleDelete = async (deleteTranscript: boolean) => {
     await deleteSession(session.key, deleteTranscript);
     setShowDeleteConfirm(false);
+  };
+
+  const handleReset = async () => {
+    await resetSession(session.key);
+    setShowResetConfirm(false);
+  };
+
+  const handleCompact = async () => {
+    await compactSession(session.key);
+    setShowCompactConfirm(false);
   };
 
   return (
@@ -361,14 +383,14 @@ function SessionRow({
               Preview
             </button>
             <button
-              onClick={() => resetSession(session.key)}
+              onClick={() => setShowResetConfirm(true)}
               className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
               type="button"
             >
               Reset
             </button>
             <button
-              onClick={() => compactSession(session.key)}
+              onClick={() => setShowCompactConfirm(true)}
               className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
               type="button"
             >
@@ -384,6 +406,68 @@ function SessionRow({
           </div>
         </td>
       </tr>
+
+      {/* Reset Confirmation */}
+      {showResetConfirm && (
+        <tr>
+          <td colSpan={5} className="bg-amber-500/5 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-amber-400">
+                Reset session "
+                {session.derivedTitle || formatSessionKey(session.key, session.label)}"? This clears
+                conversation history.
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleReset}
+                  className="rounded-md bg-amber-500 px-3 py-1 text-xs text-zinc-950 hover:bg-amber-400"
+                  type="button"
+                >
+                  Confirm Reset
+                </button>
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+
+      {/* Compact Confirmation */}
+      {showCompactConfirm && (
+        <tr>
+          <td colSpan={5} className="bg-zinc-700/30 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-300">
+                Compact session "
+                {session.derivedTitle || formatSessionKey(session.key, session.label)}"? This trims
+                old messages.
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCompact}
+                  className="rounded-md bg-zinc-600 px-3 py-1 text-xs text-zinc-100 hover:bg-zinc-500"
+                  type="button"
+                >
+                  Confirm Compact
+                </button>
+                <button
+                  onClick={() => setShowCompactConfirm(false)}
+                  className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
 
       {/* Delete Confirmation */}
       {showDeleteConfirm && (
@@ -437,10 +521,22 @@ function SessionCard({
   const { previewSession, resetSession, deleteSession, compactSession } = useSessionsStore();
   const [showActions, setShowActions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showCompactConfirm, setShowCompactConfirm] = useState(false);
 
   const handleDelete = async (deleteTranscript: boolean) => {
     await deleteSession(session.key, deleteTranscript);
     setShowDeleteConfirm(false);
+  };
+
+  const handleReset = async () => {
+    await resetSession(session.key);
+    setShowResetConfirm(false);
+  };
+
+  const handleCompact = async () => {
+    await compactSession(session.key);
+    setShowCompactConfirm(false);
   };
 
   return (
@@ -467,7 +563,7 @@ function SessionCard({
         </div>
       </div>
 
-      {showActions && !showDeleteConfirm && (
+      {showActions && !showDeleteConfirm && !showResetConfirm && !showCompactConfirm && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => onReplay(session.key)}
@@ -484,14 +580,14 @@ function SessionCard({
             Preview
           </button>
           <button
-            onClick={() => resetSession(session.key)}
+            onClick={() => setShowResetConfirm(true)}
             className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
             type="button"
           >
             Reset
           </button>
           <button
-            onClick={() => compactSession(session.key)}
+            onClick={() => setShowCompactConfirm(true)}
             className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
             type="button"
           >
@@ -504,6 +600,52 @@ function SessionCard({
           >
             Delete
           </button>
+        </div>
+      )}
+
+      {showResetConfirm && (
+        <div className="mt-3 rounded-md bg-amber-500/5 p-2">
+          <p className="mb-2 text-xs text-amber-400">
+            Reset this session? Clears conversation history.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleReset}
+              className="flex-1 rounded-md bg-amber-500 px-3 py-1 text-xs text-zinc-950 hover:bg-amber-400"
+              type="button"
+            >
+              Confirm Reset
+            </button>
+            <button
+              onClick={() => setShowResetConfirm(false)}
+              className="flex-1 rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCompactConfirm && (
+        <div className="mt-3 rounded-md bg-zinc-700/30 p-2">
+          <p className="mb-2 text-xs text-zinc-300">Compact this session? Trims old messages.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCompact}
+              className="flex-1 rounded-md bg-zinc-600 px-3 py-1 text-xs text-zinc-100 hover:bg-zinc-500"
+              type="button"
+            >
+              Confirm Compact
+            </button>
+            <button
+              onClick={() => setShowCompactConfirm(false)}
+              className="flex-1 rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

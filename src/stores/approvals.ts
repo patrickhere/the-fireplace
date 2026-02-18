@@ -63,6 +63,14 @@ export interface ExecApprovalsSnapshot {
   file: ExecApprovalsFile;
 }
 
+// ---- Incoming Approval Payload --------------------------------------------
+
+/**
+ * The payload shape received from the gateway for `exec.approval.requested`.
+ * Does not include `receivedAt` — that is a client-side field added after receipt.
+ */
+type IncomingExecApprovalPayload = Omit<ExecApprovalRequest, 'receivedAt'>;
+
 // ---- Approval Resolved Payload --------------------------------------------
 
 /**
@@ -183,11 +191,18 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
     if (eventUnsubscribe) eventUnsubscribe();
     if (resolvedUnsubscribe) resolvedUnsubscribe();
 
+    // Mark as subscribing to prevent duplicate async subscriptions
+    const sentinel: Unsubscribe = () => {};
+    set({ eventUnsubscribe: sentinel, resolvedUnsubscribe: sentinel });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { subscribe } = useConnectionStore.getState();
 
-      const unsub = subscribe<ExecApprovalRequest>('exec.approval.requested', (payload) => {
+      // If another call replaced our sentinel, abort
+      if (get().eventUnsubscribe !== sentinel) return;
+
+      const unsub = subscribe<IncomingExecApprovalPayload>('exec.approval.requested', (payload) => {
         console.log('[Approvals] Approval requested:', payload);
 
         const request: ExecApprovalRequest = {

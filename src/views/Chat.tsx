@@ -36,7 +36,7 @@ function SessionSelector() {
         if (sessionList.length === 0 && mainSessionKey) {
           const fallback = [{ key: mainSessionKey, label: 'Main' }];
           setSessions(fallback);
-          if (!activeSessionKey) {
+          if (!activeSessionKey && mainSessionKey !== activeSessionKey) {
             setActiveSession(mainSessionKey);
           }
           return;
@@ -44,13 +44,16 @@ function SessionSelector() {
 
         setSessions(sessionList);
 
-        // Set first session as active if none selected
+        // Set first session as active if none selected.
+        // Guard: skip if the session is already set to avoid a re-run loop
+        // where setActiveSession triggers activeSessionKey to change, which
+        // re-fires this effect, which calls setActiveSession again.
         if (!activeSessionKey && sessionList.length > 0) {
           const preferred = mainSessionKey
             ? sessionList.find((session) => session.key === mainSessionKey)
             : undefined;
           const target = preferred ?? sessionList[0];
-          if (target) {
+          if (target && target.key !== activeSessionKey) {
             setActiveSession(target.key);
           }
         }
@@ -327,7 +330,7 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
       .join(' ')
       .slice(0, 60);
     return (
-      <div className="mb-1 flex justify-center">
+      <div className="relative mb-1 flex justify-center">
         <button
           type="button"
           onClick={() => setShowMetadata(!showMetadata)}
@@ -383,7 +386,9 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
           <span className="font-medium">
             {isUser ? 'You' : isSystem ? 'System' : isInjected ? 'Injected Note' : 'Assistant'}
           </span>
-          <span>{new Date(message.timestamp).toLocaleTimeString()}</span>
+          <span>
+            {message.timestamp === 0 ? '—' : new Date(message.timestamp).toLocaleTimeString()}
+          </span>
           {message.model && <span className="text-zinc-600">({message.model})</span>}
         </div>
 
@@ -821,7 +826,7 @@ export function Chat() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-700 p-3">
         <div className="flex items-center gap-3">
@@ -881,6 +886,25 @@ export function Chat() {
             <p className="text-sm text-zinc-500">
               {status === 'connected' ? 'Start a conversation...' : 'Connecting to gateway...'}
             </p>
+          </div>
+        )}
+
+        {messages.length === 0 && isStreaming && (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <div className="flex gap-1">
+                <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                <div
+                  className="h-2 w-2 animate-pulse rounded-full bg-amber-500"
+                  style={{ animationDelay: '0.2s' }}
+                />
+                <div
+                  className="h-2 w-2 animate-pulse rounded-full bg-amber-500"
+                  style={{ animationDelay: '0.4s' }}
+                />
+              </div>
+              <p className="text-sm text-zinc-500">Waiting for response...</p>
+            </div>
           </div>
         )}
 

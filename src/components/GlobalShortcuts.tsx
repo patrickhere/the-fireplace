@@ -7,6 +7,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '@/hooks/useKeyboard';
+import { useChatStore } from '@/stores/chat';
 
 const VIEW_ROUTES = [
   { key: '1', path: '/', label: 'Chat' },
@@ -22,6 +23,7 @@ const VIEW_ROUTES = [
 
 export function GlobalShortcuts() {
   const navigate = useNavigate();
+  const { setActiveSession } = useChatStore();
 
   const shortcuts = useMemo((): KeyboardShortcut[] => {
     const viewShortcuts: KeyboardShortcut[] = VIEW_ROUTES.map((route) => ({
@@ -37,14 +39,18 @@ export function GlobalShortcuts() {
         label: 'New Session',
         keys: 'cmd+n',
         handler: () => {
-          // Navigate to Chat view where new sessions are created
+          // Clear the active session so Chat view starts fresh
+          // setActiveSession('') signals "no session selected" — Chat will
+          // auto-select from the session list, effectively resetting to a
+          // clean slate without destroying chat history.
+          setActiveSession('');
           navigate('/');
         },
       },
     ];
 
     return [...viewShortcuts, ...actionShortcuts];
-  }, [navigate]);
+  }, [navigate, setActiveSession]);
 
   useKeyboardShortcuts(shortcuts);
 

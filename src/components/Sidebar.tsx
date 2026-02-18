@@ -57,6 +57,7 @@ export function Sidebar() {
               <li key={item.path}>
                 <Link
                   to={item.path}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
                     'flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors',
                     isActive
@@ -97,6 +98,7 @@ export function Sidebar() {
               <li key={item.path}>
                 <Link
                   to={item.path}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
                     'flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors',
                     isActive
@@ -117,14 +119,23 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Command palette hint */}
+      {/* Command palette hint — clicking opens the palette */}
       <div className="border-t border-zinc-700 px-3 py-2">
-        <div className="flex items-center justify-between rounded-md border border-zinc-700 bg-zinc-800/50 px-2 py-1.5 text-xs text-zinc-500">
+        <button
+          type="button"
+          onClick={() => {
+            // Dispatch a synthetic Cmd+K to trigger the palette's own listener
+            window.dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true })
+            );
+          }}
+          className="flex w-full items-center justify-between rounded-md border border-zinc-700 bg-zinc-800/50 px-2 py-1.5 text-xs text-zinc-500 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-400"
+        >
           <span>Search commands...</span>
           <kbd className="rounded bg-zinc-700 px-1.5 py-0.5 font-mono text-xs text-zinc-400">
             {formatShortcut('cmd+k')}
           </kbd>
-        </div>
+        </button>
       </div>
 
       {/* Connection Status */}

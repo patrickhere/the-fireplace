@@ -115,19 +115,30 @@ export async function buildDeviceIdentity(
   clientInfo: ConnectClientInfo,
   role: string,
   scopes: string[],
-  authToken?: string
+  authToken?: string,
+  deviceId?: string
 ): Promise<ConnectDevice> {
-  // Both calls hit the Rust backend — keypair lives in the Keychain
-  const [deviceId, publicKey] = await Promise.all([
-    invoke<string>('get_device_id'),
-    invoke<string>('get_device_public_key'),
-  ]);
+  // If deviceId is already known, only fetch the public key to avoid a redundant invoke
+  let resolvedDeviceId: string;
+  let publicKey: string;
+  if (deviceId) {
+    resolvedDeviceId = deviceId;
+    publicKey = await invoke<string>('get_device_public_key');
+  } else {
+    // Both calls hit the Rust backend — keypair lives in the Keychain
+    const [id, pk] = await Promise.all([
+      invoke<string>('get_device_id'),
+      invoke<string>('get_device_public_key'),
+    ]);
+    resolvedDeviceId = id;
+    publicKey = pk;
+  }
 
   const signedAt = Date.now();
 
   // Build the payload string (same logic as before, public data only)
   const payload = buildDeviceAuthPayload({
-    deviceId,
+    deviceId: resolvedDeviceId,
     clientId: clientInfo.id,
     clientMode: clientInfo.mode,
     role,
@@ -141,7 +152,7 @@ export async function buildDeviceIdentity(
   const signature = await invoke<string>('sign_payload', { payload });
 
   return {
-    id: deviceId,
+    id: resolvedDeviceId,
     publicKey,
     signature,
     signedAt,

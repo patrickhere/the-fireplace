@@ -67,14 +67,45 @@ export async function retrieveDeviceToken(
     gatewayUrl,
   });
 
+  // Validate fields before casting to avoid silent type mismatches
+  const token = result?.token;
+  const rDeviceId = result?.deviceId;
+  const rGatewayUrl = result?.gatewayUrl;
+  const issuedAtMs = result?.issuedAtMs;
+  const storedAtMs = result?.storedAtMs;
+  const role = result?.role;
+  const scopes = result?.scopes;
+
+  if (typeof token !== 'string' || !token) {
+    throw new Error('Keychain result missing or invalid "token" field');
+  }
+  if (typeof rDeviceId !== 'string' || !rDeviceId) {
+    throw new Error('Keychain result missing or invalid "deviceId" field');
+  }
+  if (typeof rGatewayUrl !== 'string' || !rGatewayUrl) {
+    throw new Error('Keychain result missing or invalid "gatewayUrl" field');
+  }
+  if (typeof issuedAtMs !== 'number') {
+    throw new Error('Keychain result missing or invalid "issuedAtMs" field');
+  }
+  if (typeof storedAtMs !== 'number') {
+    throw new Error('Keychain result missing or invalid "storedAtMs" field');
+  }
+  if (typeof role !== 'string') {
+    throw new Error('Keychain result missing or invalid "role" field');
+  }
+  if (!Array.isArray(scopes)) {
+    throw new Error('Keychain result missing or invalid "scopes" field');
+  }
+
   return {
-    token: result.token as string,
-    deviceId: result.deviceId as string,
-    gatewayUrl: result.gatewayUrl as string,
-    issuedAtMs: result.issuedAtMs as number,
-    storedAtMs: result.storedAtMs as number,
-    role: result.role as string,
-    scopes: result.scopes as string[],
+    token,
+    deviceId: rDeviceId,
+    gatewayUrl: rGatewayUrl,
+    issuedAtMs,
+    storedAtMs,
+    role,
+    scopes: scopes as string[],
   };
 }
 

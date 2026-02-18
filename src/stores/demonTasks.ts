@@ -67,14 +67,17 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
     const { isTracking } = get();
     if (isTracking) return;
 
-    // Set immediately to prevent async race (duplicate subscriptions)
-    set({ isTracking: true });
-
     (async () => {
       try {
         const { useConnectionStore } = await import('./connection');
         const { useAgentsStore } = await import('./agents');
-        const { subscribe } = useConnectionStore.getState();
+        const { status, subscribe } = useConnectionStore.getState();
+
+        // Guard: only track when connected
+        if (status !== 'connected') return;
+
+        // Set isTracking: true only after confirming connection is live
+        set({ isTracking: true });
 
         // Build agent lookup for emoji/name resolution
         const getAgentInfo = (agentId: string) => {
@@ -95,7 +98,12 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
 
           // Match agent from sessionKey
           const matchedAgent =
-            agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+            agents.find(
+              (a) =>
+                payload.sessionKey === a.id ||
+                payload.sessionKey.startsWith(a.id + ':') ||
+                payload.sessionKey.startsWith(a.id + '/')
+            ) ??
             agents.find(
               (a) =>
                 a.identity?.name &&

@@ -514,9 +514,12 @@ export function Approvals() {
   const handleSave = useCallback(async () => {
     if (!localFile) return;
     setIsSaving(true);
-    await saveApprovals(localFile, snapshot?.hash);
-    setIsSaving(false);
-    setIsDirty(false);
+    try {
+      await saveApprovals(localFile, snapshot?.hash);
+      setIsDirty(false);
+    } finally {
+      setIsSaving(false);
+    }
   }, [localFile, snapshot?.hash, saveApprovals]);
 
   // CLI backend requests: pending exec approvals where command starts with "claude " or "codex "
@@ -552,12 +555,12 @@ export function Approvals() {
 
   const getAgentInfo = useCallback(
     (agentId?: string) => {
-      if (!agentId) return { name: 'Unknown Agent', emoji: '🤖' };
+      if (!agentId) return { name: 'Unknown Agent', emoji: '[bot]' };
       const agent = agents.find((a) => a.id === agentId);
-      if (!agent) return { name: agentId, emoji: '🤖' };
+      if (!agent) return { name: agentId, emoji: '[bot]' };
       return {
         name: agent.identity?.name ?? agent.name ?? agentId,
-        emoji: agent.identity?.emoji ?? '🔥',
+        emoji: agent.identity?.emoji ?? '[bot]',
       };
     },
     [agents]

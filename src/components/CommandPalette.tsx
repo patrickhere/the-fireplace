@@ -100,6 +100,24 @@ const NAV_ROUTES: NavRoute[] = [
   { label: 'Logs', path: '/logs', icon: '|', keywords: ['log', 'debug', 'output'] },
   { label: 'Models', path: '/models', icon: '%', keywords: ['model', 'llm', 'claude'] },
   { label: 'Usage', path: '/usage', icon: '$', keywords: ['usage', 'tokens', 'cost'] },
+  {
+    label: 'Demon Chat Room',
+    path: '/demon-chat',
+    icon: 'F',
+    keywords: ['demon', 'chat', 'room', 'agents'],
+  },
+  {
+    label: 'Demon Health',
+    path: '/demon-health',
+    icon: 'F',
+    keywords: ['demon', 'health', 'status'],
+  },
+  {
+    label: 'Demon Kanban',
+    path: '/demon-tasks',
+    icon: 'F',
+    keywords: ['demon', 'kanban', 'tasks', 'board'],
+  },
 ];
 
 // ---- Component ------------------------------------------------------------
@@ -175,9 +193,18 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
+    >
       {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/60" onClick={() => setOpen(false)} />
+      <div
+        role="presentation"
+        className="fixed inset-0 bg-black/60"
+        onClick={() => setOpen(false)}
+      />
 
       {/* Palette */}
       <div className="relative w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/50">

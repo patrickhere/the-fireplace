@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 import { useConnectionStore } from './connection';
 
@@ -478,6 +479,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         limit: 1000,
       });
 
+      // Guard against stale response: if session changed while awaiting,
+      // discard the response to prevent overwriting the new session's messages.
+      if (get().activeSessionKey !== sessionKey) return;
+
       const rawMessages = response.messages || [];
       const messages: Message[] = rawMessages
         .map((entry) => normalizeHistoryEntry(entry))
@@ -539,28 +544,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // where events arrive between the await and the state update.
       // Also start a stream watchdog — if no events arrive within 30s,
       // force-exit streaming state so the UI doesn't get stuck.
-      const initialWatchdog = setTimeout(() => {
-        const { isStreaming } = get();
-        if (!isStreaming) return;
-        console.warn('[Chat] Stream watchdog: no events received within 30s');
-        clearStreamTimers(get, set);
-        set({
-          error: 'Stream stalled waiting for gateway events.',
-          isStreaming: false,
+      // Store the watchdog in state atomically with the streaming state
+      // so clearStreamTimers can always find and cancel it.
+      set((state) => {
+        const watchdog = setTimeout(() => {
+          const { isStreaming } = get();
+          if (!isStreaming) return;
+          console.warn('[Chat] Stream watchdog: no events received within 30s');
+          clearStreamTimers(get, set);
+          set({
+            error: 'Stream stalled waiting for gateway events.',
+            isStreaming: false,
+            streamingMessageId: null,
+            streamingBuffer: '',
+          });
+        }, 30_000);
+
+        return {
+          messages: [...state.messages, userMessage],
+          attachments: [], // Clear attachments after sending
+          isStreaming: true,
           streamingMessageId: null,
           streamingBuffer: '',
-        });
-      }, 30_000);
-
-      set((state) => ({
-        messages: [...state.messages, userMessage],
-        attachments: [], // Clear attachments after sending
-        isStreaming: true,
-        streamingMessageId: null,
-        streamingBuffer: '',
-        _streamWatchdog: initialWatchdog,
-        _pollFallback: null,
-      }));
+          _streamWatchdog: watchdog,
+          _pollFallback: null,
+        };
+      });
 
       // Send to gateway — chat.send is NON-BLOCKING per the protocol spec.
       // It returns { runId, status: "started" }. The actual AI response
@@ -590,10 +599,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const gatewayAttachments: GatewayAttachment[] =
         allAttachments.length > 0 ? allAttachments.map(toGatewayAttachment) : [];
 
+      // idempotencyKey is auto-injected by the gateway client for chat.send
+      // (it's in SIDE_EFFECTING_METHODS). Don't pass one explicitly.
       const sendResult = await request<{ runId?: string; status?: string }>('chat.send', {
         sessionKey: activeSessionKey,
         message: text,
-        idempotencyKey: crypto.randomUUID(),
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
         ...(sessionConfig.thinkingLevel && sessionConfig.thinkingLevel !== 'none'
           ? { thinking: sessionConfig.thinkingLevel }
@@ -726,14 +736,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
           console.warn('[Chat] Poll fallback error:', err);
         }
 
-        // Schedule next poll (3s intervals)
-        const next = setTimeout(pollForResponse, 3_000);
-        set({ _pollFallback: next });
+        // Schedule next poll (3s intervals).
+        // Use the functional set form to atomically replace any existing poll
+        // timer so clearStreamTimers always has a valid handle to cancel.
+        set((state) => {
+          if (state._pollFallback) clearTimeout(state._pollFallback);
+          return { _pollFallback: setTimeout(pollForResponse, 3_000) };
+        });
       };
 
-      // Start first poll after 3s
-      const firstPoll = setTimeout(pollForResponse, 3_000);
-      set({ _pollFallback: firstPoll });
+      // Start first poll after 3s. Atomically store the handle so
+      // clearStreamTimers can always cancel it regardless of timing.
+      set((state) => {
+        if (state._pollFallback) clearTimeout(state._pollFallback);
+        return { _pollFallback: setTimeout(pollForResponse, 3_000) };
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
       clearStreamTimers(get, set);
@@ -817,9 +834,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addMultipleAttachments: (files: File[]) => {
+    // Capture active session key at call time. If the session changes before
+    // any FileReader callback fires, the attachment belongs to the old session
+    // and should be discarded to avoid polluting the new session's state.
+    const sessionKey = get().activeSessionKey;
+
     for (const file of files) {
       const reader = new FileReader();
       reader.onload = () => {
+        // Guard: discard if session changed while reading
+        if (get().activeSessionKey !== sessionKey) return;
+
         const base64 = reader.result as string;
         const data = base64.split(',')[1] || base64;
         const attachment: Attachment = {
@@ -867,7 +892,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           await request('sessions.patch', { key: activeSessionKey, ...patch });
         }
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to update session config';
         console.error('[Chat] Failed to patch session config:', err);
+        toast.error(errorMessage);
       }
     })();
   },
@@ -885,12 +912,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { subscribe } = useConnectionStore.getState();
 
     const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
-      const {
-        activeSessionKey: currentSession,
-        streamingMessageId,
-        streamingBuffer,
-        lastSeq,
-      } = get();
+      const { activeSessionKey: currentSession, streamingMessageId, lastSeq } = get();
 
       // Ignore events from other sessions
       if (payload.sessionKey !== currentSession) return;
@@ -900,20 +922,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Alternate schema: { state, message, errorMessage }
       // We normalize to a unified internal shape before any further handling.
       //
-      // If the payload has `delta` or `done` (legacy) but no `state`,
-      // synthesize `state` so the rest of the handler can use a single path.
+      // IMPORTANT: Do not mutate the incoming payload — other subscribers may
+      // be listening to the same 'chat' event. Build a normalized copy instead.
+      //
+      // NOTE: ChatEventPayload.state is intentionally typed as optional to
+      // accommodate the legacy schema which omits it. The canonical schema
+      // (ChatEventSchema) declares state as required.
+      let normalized: ChatEventPayload;
       if (payload.state === undefined) {
         if (payload.error) {
-          (payload as ChatEventPayload).state = 'error';
+          normalized = { ...payload, state: 'error' };
         } else if (payload.done) {
-          (payload as ChatEventPayload).state = 'final';
+          normalized = { ...payload, state: 'final' };
         } else if (payload.delta !== undefined) {
-          (payload as ChatEventPayload).state = 'delta';
-          // Wrap legacy delta string as a message so extractTextFromEventMessage works
-          if (typeof payload.delta === 'string') {
-            (payload as ChatEventPayload).message = payload.delta;
-          }
+          normalized = {
+            ...payload,
+            state: 'delta',
+            // Wrap legacy delta string as a message so extractTextFromEventMessage works
+            ...(typeof payload.delta === 'string' ? { message: payload.delta } : {}),
+          };
+        } else {
+          normalized = payload;
         }
+      } else {
+        normalized = payload;
       }
       // ---- End normalization ----------------------------------------------
 
@@ -942,21 +974,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }, 30_000);
       set({ _streamWatchdog: nextWatchdog });
 
-      // Track sequence numbers (if present)
-      if (payload.seq > lastSeq) {
-        set({ lastSeq: payload.seq });
+      // Track sequence numbers (if present — guard for undefined from legacy schema)
+      if (typeof normalized.seq === 'number' && normalized.seq > lastSeq) {
+        set({ lastSeq: normalized.seq });
       }
 
       // Handle error — covers legacy { error: { message } | string } and
       // alternate { state: 'error', errorMessage } schemas.
-      if (payload.error || payload.state === 'error' || payload.errorMessage) {
-        const rawError = payload.error;
+      if (normalized.error || normalized.state === 'error' || normalized.errorMessage) {
+        const rawError = normalized.error;
         const errorMessage =
           typeof rawError === 'string'
             ? rawError
             : rawError && typeof rawError === 'object' && 'message' in rawError
               ? (rawError as { message: string }).message
-              : payload.errorMessage || 'Chat request failed';
+              : normalized.errorMessage || 'Chat request failed';
 
         clearStreamTimers(get, set);
         set({
@@ -969,10 +1001,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // Handle alternate gateway schema: final may carry the completed message
-      if (payload.state === 'final') {
-        const finalText = extractTextFromEventMessage(payload.message);
+      if (normalized.state === 'final') {
+        const finalText = extractTextFromEventMessage(normalized.message);
         if (finalText) {
-          const messageId = streamingMessageId || payload.messageId || generateMessageId();
+          const messageId = streamingMessageId || normalized.messageId || generateMessageId();
           set((state) => {
             const existingIndex = state.messages.findIndex((m) => m.id === messageId);
             const updatedMessage: Message = {
@@ -1002,7 +1034,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // Handle alternate gateway schema: aborted
-      if (payload.state === 'aborted') {
+      if (normalized.state === 'aborted') {
         clearStreamTimers(get, set);
         set({
           isStreaming: false,
@@ -1013,32 +1045,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       // Handle alternate gateway schema delta stream
-      if (payload.state === 'delta') {
-        const text = extractTextFromEventMessage(payload.message);
-        const newBuffer = streamingBuffer + text;
-        const messageId = streamingMessageId || payload.messageId || generateMessageId();
-
-        set({
-          streamingBuffer: newBuffer,
-          streamingMessageId: messageId,
-        });
+      // Use a single atomic set() to avoid stale-closure bugs where two rapid
+      // delta events read the same streamingBuffer from the outer closure.
+      if (normalized.state === 'delta') {
+        const deltaText = extractTextFromEventMessage(normalized.message);
+        const resolvedMessageId = streamingMessageId || normalized.messageId || generateMessageId();
 
         set((state) => {
-          const existingIndex = state.messages.findIndex((m) => m.id === messageId);
+          const newBuffer = state.streamingBuffer + deltaText;
+          const existingIndex = state.messages.findIndex((m) => m.id === resolvedMessageId);
           const updatedMessage: Message = {
-            id: messageId,
+            id: resolvedMessageId,
             role: 'assistant',
             content: [{ type: 'text', text: newBuffer }],
             timestamp: Date.now(),
           };
 
-          if (existingIndex >= 0) {
-            const messages = [...state.messages];
-            messages[existingIndex] = updatedMessage;
-            return { messages };
-          }
+          const messages =
+            existingIndex >= 0
+              ? state.messages.map((m, i) => (i === existingIndex ? updatedMessage : m))
+              : [...state.messages, updatedMessage];
 
-          return { messages: [...state.messages, updatedMessage] };
+          return {
+            messages,
+            streamingBuffer: newBuffer,
+            streamingMessageId: resolvedMessageId,
+          };
         });
         return;
       }

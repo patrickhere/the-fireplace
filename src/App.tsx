@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
 import { Toaster } from 'sonner';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { useConnectionStore } from '@/stores/connection';
@@ -30,15 +30,18 @@ import { DemonKanban } from '@/views/DemonKanban';
 function App() {
   const isMobile = useIsMobile();
   const { connect, status } = useConnectionStore();
+  const connectAttempted = useRef(false);
 
-  // Auto-connect on app startup
+  // Auto-connect on app startup — use a ref to prevent double-invocation
+  // while still correctly reading status from state
   useEffect(() => {
-    if (status === 'disconnected') {
+    if (!connectAttempted.current && status === 'disconnected') {
+      connectAttempted.current = true;
       connect().catch((err) => {
         console.error('[App] Auto-connect failed:', err);
       });
     }
-  }, []); // Only run once on mount
+  }, [status, connect]);
 
   return (
     <BrowserRouter>
@@ -81,6 +84,7 @@ function App() {
               <Route path="/demon-chat" element={<DemonChatRoom />} />
               <Route path="/demon-health" element={<DemonHealth />} />
               <Route path="/demon-tasks" element={<DemonKanban />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
 

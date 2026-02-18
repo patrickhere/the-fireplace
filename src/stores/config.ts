@@ -64,7 +64,7 @@ interface ConfigState {
   // Data
   rawConfig: string | null;
   configHash: string | null;
-  schema: unknown | null;
+  schema: unknown;
   uiHints: Record<string, UiHint>;
   endpointResults: Map<string, EndpointTestResult>;
   lastFetchedAt: number | null;

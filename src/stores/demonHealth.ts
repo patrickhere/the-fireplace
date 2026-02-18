@@ -52,6 +52,7 @@ interface DemonHealthState {
   isMonitoring: boolean;
 
   // Internal refs (not serializable)
+  _refCount: number;
   _chatUnsub: Unsubscribe | null;
   _execUnsub: Unsubscribe | null;
   _healthUnsub: Unsubscribe | null;
@@ -90,6 +91,7 @@ function buildDemonFromAgent(agent: Agent): DemonStatus {
 export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   demons: [],
   isMonitoring: false,
+  _refCount: 0,
   _chatUnsub: null,
   _execUnsub: null,
   _healthUnsub: null,
@@ -97,7 +99,9 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   _execTimeouts: [],
 
   startMonitoring: () => {
-    const { isMonitoring } = get();
+    const { isMonitoring, _refCount } = get();
+    // Increment ref count — multiple views can share the monitor
+    set({ _refCount: _refCount + 1 });
     if (isMonitoring) return;
 
     // Set immediately to prevent async race (duplicate subscriptions)
@@ -131,7 +135,12 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
           // Match agent from sessionKey
           const { agents } = useAgentsStore.getState();
           const matchedAgent =
-            agents.find((a) => payload.sessionKey.startsWith(a.id)) ??
+            agents.find(
+              (a) =>
+                payload.sessionKey === a.id ||
+                payload.sessionKey.startsWith(a.id + ':') ||
+                payload.sessionKey.startsWith(a.id + '/')
+            ) ??
             agents.find(
               (a) =>
                 a.identity?.name &&
@@ -173,8 +182,8 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
           if (!demons.some((d) => d.demonId === agentId)) return;
 
           const cmd = payload.command ?? '';
-          const isClaude = cmd.startsWith('claude');
-          const isCodex = cmd.startsWith('codex');
+          const isClaude = cmd === 'claude' || cmd.startsWith('claude ');
+          const isCodex = cmd === 'codex' || cmd.startsWith('codex ');
           if (!isClaude && !isCodex) return;
 
           // Mark CLI backend as active
@@ -297,7 +306,14 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   },
 
   stopMonitoring: () => {
-    const { _chatUnsub, _execUnsub, _healthUnsub, _idleCheckInterval, _execTimeouts } = get();
+    const { _refCount, _chatUnsub, _execUnsub, _healthUnsub, _idleCheckInterval, _execTimeouts } =
+      get();
+    const nextRef = Math.max(0, _refCount - 1);
+    set({ _refCount: nextRef });
+
+    // Only tear down when last consumer leaves
+    if (nextRef > 0) return;
+
     _chatUnsub?.();
     _execUnsub?.();
     _healthUnsub?.();

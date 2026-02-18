@@ -27,6 +27,7 @@ export function MobileNav() {
             <Link
               key={tab.path}
               to={tab.path}
+              aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 transition-colors',
                 isActive ? 'text-amber-400' : 'text-zinc-400'

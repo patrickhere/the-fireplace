@@ -56,10 +56,7 @@ export interface CronJob {
 }
 
 export interface CronRunLogEntry {
-  runId?: string;
   jobId: string;
-  startedAtMs?: number;
-  finishedAtMs?: number;
   status: string;
   error?: string;
   durationMs?: number;
@@ -154,7 +151,7 @@ export const useCronStore = create<CronState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      const response = await request<CronListResponse>('cron.list');
+      const response = await request<CronListResponse>('cron.list', {});
 
       set({
         jobs: response.jobs ?? [],
@@ -280,9 +277,16 @@ export const useCronStore = create<CronState>((set, get) => ({
       _eventUnsubscribe();
     }
 
+    // Mark as subscribing to prevent duplicate async subscriptions
+    const sentinel: Unsubscribe = () => {};
+    set({ _eventUnsubscribe: sentinel });
+
     (async () => {
       const { useConnectionStore } = await import('./connection');
       const { subscribe } = useConnectionStore.getState();
+
+      // If another call replaced our sentinel, abort
+      if (get()._eventUnsubscribe !== sentinel) return;
 
       const unsub = subscribe<CronEventPayload>('cron', (payload) => {
         // Validate payload has the minimum required field
