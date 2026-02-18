@@ -7,6 +7,7 @@ import { useChatStore, type Attachment, type SessionConfig, type Message } from 
 import { useConnectionStore } from '@/stores/connection';
 import { useModelsStore } from '@/stores/models';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
+import { formatSessionKey } from '@/lib/utils';
 
 // ---- Session Selector Component -------------------------------------------
 
@@ -73,7 +74,7 @@ function SessionSelector() {
     >
       {sessions.map((session) => (
         <option key={session.key} value={session.key}>
-          {session.label || session.key}
+          {formatSessionKey(session.key, session.label)}
         </option>
       ))}
     </select>
@@ -275,10 +276,62 @@ function ThinkingBlock({ text }: { text?: string }) {
 
 // ---- Message Bubble -------------------------------------------------------
 
+/**
+ * Detect system messages that are internal gateway metadata — not useful for
+ * human display. These include channel status updates, conversation info blocks,
+ * and untrusted metadata injections.
+ */
+function isGatewayMetadata(message: Message): boolean {
+  if (message.role !== 'system') return false;
+  const text = message.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text || '')
+    .join('\n');
+  // Conversation info / untrusted metadata blocks
+  if (/\b(untrusted metadata|conversation.info|conversation_label)\b/i.test(text)) return true;
+  // Channel connect/disconnect status lines
+  if (/^\[?\d{4}-\d{2}-\d{2}.*\b(connected|disconnected|status \d+)\b/i.test(text)) return true;
+  // Reply-to instruction metadata
+  if (/\[\[reply_to_current\]\]/i.test(text)) return true;
+  return false;
+}
+
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isInjected = message.metadata?.injected === true;
+  const [showMetadata, setShowMetadata] = useState(false);
+
+  // Collapse internal gateway metadata into a small toggle
+  if (isGatewayMetadata(message)) {
+    const preview = message.content
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text || '')
+      .join(' ')
+      .slice(0, 60);
+    return (
+      <div className="mb-1 flex justify-center">
+        <button
+          type="button"
+          onClick={() => setShowMetadata(!showMetadata)}
+          className="max-w-md truncate rounded px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-800/50 hover:text-zinc-400"
+        >
+          {showMetadata ? '▾' : '▸'} {preview}…
+        </button>
+        {showMetadata && (
+          <div className="absolute z-10 mt-6 max-w-lg rounded border border-zinc-800 bg-zinc-950 p-2 text-xs text-zinc-500 shadow-lg">
+            {message.content
+              .filter((c) => c.type === 'text')
+              .map((c, i) => (
+                <pre key={i} className="whitespace-pre-wrap">
+                  {c.text}
+                </pre>
+              ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Partition content blocks by type
   const textBlocks = message.content.filter((c) => c.type === 'text');
@@ -288,8 +341,12 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
   const toolResultBlocks = message.content.filter((c) => c.type === 'tool_result');
   const thinkingBlocks = message.content.filter((c) => c.type === 'thinking');
 
-  // Combine text content for markdown rendering
-  const textContent = textBlocks.map((c) => c.text).join('\n');
+  // Combine text content for markdown rendering, stripping internal markers
+  const textContent = textBlocks
+    .map((c) => c.text || '')
+    .join('\n')
+    .replace(/\[\[reply_to_current\]\]/gi, '')
+    .trim();
 
   return (
     <div

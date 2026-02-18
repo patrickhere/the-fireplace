@@ -9,6 +9,7 @@ import { useModelsStore } from '@/stores/models';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { SessionReplay } from '@/components/SessionReplay';
 import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
+import { formatSessionKey } from '@/lib/utils';
 
 // ---- Session Preview Modal ------------------------------------------------
 
@@ -123,7 +124,7 @@ function SessionConfigModal() {
             >
               {sessions.map((session) => (
                 <option key={session.key} value={session.key}>
-                  {session.derivedTitle || session.label || session.key}
+                  {session.derivedTitle || formatSessionKey(session.key, session.label)}
                 </option>
               ))}
             </select>
@@ -286,7 +287,9 @@ function SessionUsageModal() {
             {usageStats.sessions.map((session, idx) => (
               <div key={idx} className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-100">{session.key}</span>
+                  <span className="text-sm font-medium text-zinc-100">
+                    {formatSessionKey(session.key)}
+                  </span>
                   <span className="text-xs text-zinc-400">{session.model || 'default'}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
@@ -333,7 +336,7 @@ function SessionRow({
     <>
       <tr className="border-b border-zinc-700 hover:bg-zinc-800/50">
         <td className="p-3 text-sm text-zinc-100">
-          {session.derivedTitle || session.label || session.key}
+          {session.derivedTitle || formatSessionKey(session.key, session.label)}
         </td>
         <td className="p-3 text-sm text-zinc-400">{session.model || 'default'}</td>
         <td className="p-3 text-sm text-zinc-400">{session.messageCount || 0}</td>
@@ -388,7 +391,8 @@ function SessionRow({
           <td colSpan={5} className="bg-red-500/5 p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-red-400">
-                Delete session "{session.derivedTitle || session.label || session.key}"?
+                Delete session "
+                {session.derivedTitle || formatSessionKey(session.key, session.label)}"?
               </span>
               <div className="flex gap-2">
                 <button
@@ -443,7 +447,7 @@ function SessionCard({
     <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-zinc-100">
-          {session.derivedTitle || session.label || session.key}
+          {session.derivedTitle || formatSessionKey(session.key, session.label)}
         </h3>
         <button
           onClick={() => setShowActions(!showActions)}
