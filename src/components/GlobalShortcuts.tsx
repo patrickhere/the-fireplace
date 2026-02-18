@@ -6,8 +6,7 @@
 
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useKeyboardShortcuts } from '@/hooks/useKeyboard';
-import type { KeyboardShortcut } from '@/hooks/useKeyboard';
+import { useKeyboardShortcuts, type KeyboardShortcut } from '@/hooks/useKeyboard';
 
 const VIEW_ROUTES = [
   { key: '1', path: '/', label: 'Chat' },

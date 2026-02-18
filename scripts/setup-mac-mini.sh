@@ -613,6 +613,18 @@ banner "Write Demon Soul Files"
 write_soul() {
   local id="$1"
   local content="$2"
+  local execution_contract='
+## Execution Contract (Non-Negotiable)
+- Do not claim an action is done unless you executed it and observed the result.
+- If you did not execute it, explicitly say: NOT DONE.
+- For every request, answer with one status block:
+  - DONE: include concrete evidence (command/output/result ids).
+  - NOT DONE: include exact blocker and what is needed.
+  - ERROR: include failing step and error text.
+- Avoid repetitive confirmation loops. If user intent is clear, execute or report blocker.
+- Prefer concise operational updates over planning text.
+- Never imply cross-demon changes were scheduled/configured unless you actually performed those changes.
+'
 
   # Gateway reads agent files from workspace dir, not agentDir
   # Default agent (calcifer) uses ~/.openclaw/workspace, others use workspace-<id>
@@ -625,6 +637,11 @@ write_soul() {
   local soul_file="$workspace_dir/SOUL.md"
 
   mkdir -p "$workspace_dir"
+  if [[ "$content" != *"## Execution Contract (Non-Negotiable)"* ]]; then
+    content="${content}
+
+${execution_contract}"
+  fi
   echo "$content" > "$soul_file"
   ok "Wrote $soul_file"
 }

@@ -15,8 +15,9 @@ import type {
   EventFrame,
   Unsubscribe,
   RequestOptions,
+  PresenceEntry,
 } from '@/gateway/types';
-import { buildClientInfo } from '@/gateway/protocol';
+import { buildClientInfo, getDeviceId } from '@/gateway/protocol';
 import { deleteDeviceToken } from '@/lib/keychain';
 
 // ---- Store Types ----------------------------------------------------------
@@ -31,6 +32,23 @@ interface ServerInfo {
   policy: GatewayPolicy | null;
 }
 
+// ---- Presence Event Payload -----------------------------------------------
+
+/**
+ * Payload shape for the `presence` gateway event.
+ * Carries a delta or a full replacement of the presence list.
+ */
+interface PresenceEventPayload {
+  /** Full replacement list (server pushes all connected clients). */
+  presence?: PresenceEntry[];
+  /** A single entry that joined. */
+  joined?: PresenceEntry;
+  /** instanceId of the client that left. */
+  left?: string;
+}
+
+// ---------------------------------------------------------------------------
+
 interface ConnectionState {
   // -- Reactive state (drives UI)
   status: GatewayConnectionState;
@@ -41,9 +59,16 @@ interface ConnectionState {
   error: string | null;
   gatewayUrl: string;
   reconnectAttempt: number;
+  /** Gateway server version string (e.g. "2026.1.29"), null until connected. */
+  gatewayVersion: string | null;
+  /** Live presence list — updated by presence events after initial connect. */
+  presence: PresenceEntry[];
 
   // -- Client instance (not serializable, kept as a ref)
   client: GatewayClient | null;
+
+  // -- Presence subscription (internal ref)
+  _presenceUnsub: Unsubscribe | null;
 
   // -- Actions
   setGatewayUrl: (url: string) => void;
@@ -81,7 +106,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   error: null,
   gatewayUrl: DEFAULT_GATEWAY_URL,
   reconnectAttempt: 0,
+  gatewayVersion: null,
+  presence: [],
   client: null,
+  _presenceUnsub: null,
 
   setGatewayUrl: (url: string) => {
     set({ gatewayUrl: url });
@@ -129,6 +157,39 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         update.snapshot = client.snapshot;
         update.stateVersion = client.stateVersion;
         update.auth = client.auth;
+        update.gatewayVersion = si?.version ?? null;
+        // Seed presence list from snapshot
+        update.presence = (client.snapshot?.presence ?? []) as PresenceEntry[];
+
+        // Subscribe to presence events for live updates (unsubscribe previous if any)
+        const prevPresenceUnsub = get()._presenceUnsub;
+        if (prevPresenceUnsub) prevPresenceUnsub();
+        const presenceUnsub = client.on<PresenceEventPayload>('presence', (payload) => {
+          if (typeof payload !== 'object' || payload === null) return;
+          set((state) => {
+            if (Array.isArray((payload as PresenceEventPayload).presence)) {
+              // Full replacement
+              return { presence: (payload as PresenceEventPayload).presence! };
+            }
+            const joined = (payload as PresenceEventPayload).joined;
+            const left = (payload as PresenceEventPayload).left;
+            let updated = [...state.presence];
+            if (joined) {
+              // Replace existing entry with same instanceId or append
+              const idx = updated.findIndex((p) => p.instanceId === joined.instanceId);
+              if (idx >= 0) {
+                updated[idx] = joined;
+              } else {
+                updated = [...updated, joined];
+              }
+            }
+            if (left) {
+              updated = updated.filter((p) => p.instanceId !== left);
+            }
+            return { presence: updated };
+          });
+        });
+        update._presenceUnsub = presenceUnsub;
       }
 
       if (newState === 'reconnecting') {
@@ -138,7 +199,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       if (newState === 'disconnected') {
         update.serverInfo = null;
         update.snapshot = null;
+        update.stateVersion = { presence: 0, health: 0 };
         update.auth = null;
+        update.gatewayVersion = null;
+        update.presence = [];
+        const presenceUnsub = get()._presenceUnsub;
+        if (presenceUnsub) presenceUnsub();
+        update._presenceUnsub = null;
       }
 
       set(update);
@@ -158,33 +225,43 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   disconnect: () => {
-    const { client } = get();
+    const { client, _presenceUnsub } = get();
     if (client) {
       client.disconnect();
     }
+    if (_presenceUnsub) _presenceUnsub();
     set({
       status: 'disconnected',
       serverInfo: null,
       snapshot: null,
+      stateVersion: { presence: 0, health: 0 },
       auth: null,
       error: null,
       reconnectAttempt: 0,
+      gatewayVersion: null,
+      presence: [],
+      _presenceUnsub: null,
     });
   },
 
   destroy: () => {
-    const { client } = get();
+    const { client, _presenceUnsub } = get();
     if (client) {
       client.destroy();
     }
+    if (_presenceUnsub) _presenceUnsub();
     set({
       client: null,
       status: 'disconnected',
       serverInfo: null,
       snapshot: null,
+      stateVersion: { presence: 0, health: 0 },
       auth: null,
       error: null,
       reconnectAttempt: 0,
+      gatewayVersion: null,
+      presence: [],
+      _presenceUnsub: null,
     });
   },
 
@@ -220,12 +297,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   clearDeviceToken: async () => {
     const { gatewayUrl } = get();
-    const deviceId = localStorage.getItem('openclaw_device_id');
-
-    if (!deviceId) {
-      console.warn('[ConnectionStore] No device ID found, cannot clear token');
-      return;
-    }
+    const deviceId = await getDeviceId();
 
     try {
       await deleteDeviceToken(deviceId, gatewayUrl);

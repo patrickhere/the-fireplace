@@ -2,8 +2,7 @@
 // OpenClaw Gateway Protocol v3 -- Frame Builders & Helpers
 // ---------------------------------------------------------------------------
 
-import * as ed25519 from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2.js';
+import { invoke } from '@tauri-apps/api/core';
 import type {
   RequestFrame,
   ConnectParams,
@@ -11,10 +10,6 @@ import type {
   ConnectDevice,
   GatewayFrame,
 } from './types';
-
-// Configure ed25519 with SHA-512 before any operations
-// This is REQUIRED for @noble/ed25519 v3.x to support synchronous operations
-ed25519.hashes.sha512 = sha512;
 
 // ---- ID Generation --------------------------------------------------------
 
@@ -60,95 +55,15 @@ export function buildConnectParams(
   };
 }
 
-// ---- Device Identity Helpers (Ed25519) ------------------------------------
-
-/**
- * Convert Uint8Array to base64-url encoding (RFC 4648 §5).
- * This matches OpenClaw's base64UrlEncode format.
- */
-function base64UrlEncode(bytes: Uint8Array): string {
-  const base64 = btoa(String.fromCharCode(...bytes));
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-/**
- * Generate or retrieve Ed25519 device keypair from localStorage.
- * Matches OpenClaw's device identity format exactly.
- */
-async function getOrCreateEd25519Keypair(): Promise<{
-  deviceId: string;
-  publicKey: string;
-  privateKey: Uint8Array;
-}> {
-  const DEVICE_ID_KEY = 'openclaw_device_id';
-  const PUBLIC_KEY_KEY = 'openclaw_public_key_ed25519';
-  const PRIVATE_KEY_KEY = 'openclaw_private_key_ed25519';
-
-  // Check if we have existing keys
-  const existingDeviceId = localStorage.getItem(DEVICE_ID_KEY);
-  const existingPublicKey = localStorage.getItem(PUBLIC_KEY_KEY);
-  const existingPrivateKey = localStorage.getItem(PRIVATE_KEY_KEY);
-
-  if (existingDeviceId && existingPublicKey && existingPrivateKey) {
-    try {
-      // Restore private key from hex
-      const privateKey = new Uint8Array(
-        existingPrivateKey.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))
-      );
-      return {
-        deviceId: existingDeviceId,
-        publicKey: existingPublicKey,
-        privateKey,
-      };
-    } catch (err) {
-      console.warn(
-        '[Protocol] Failed to import existing Ed25519 keypair, generating new one:',
-        err
-      );
-    }
-  }
-
-  // Generate new Ed25519 keypair
-  const privateKey = ed25519.utils.randomSecretKey();
-  const publicKeyBytes = await ed25519.getPublicKey(privateKey);
-
-  // Encode public key as base64-url (matching OpenClaw format)
-  const publicKey = base64UrlEncode(publicKeyBytes);
-
-  // Derive device ID from SHA-256 hash of public key bytes (as hex)
-  const publicKeyHash = await crypto.subtle.digest(
-    'SHA-256',
-    publicKeyBytes as unknown as BufferSource
-  );
-  const deviceId = Array.from(new Uint8Array(publicKeyHash))
-    .map((b: number) => b.toString(16).padStart(2, '0'))
-    .join('');
-
-  // Store in localStorage (private key as hex for easy serialization)
-  localStorage.setItem(DEVICE_ID_KEY, deviceId);
-  localStorage.setItem(PUBLIC_KEY_KEY, publicKey);
-  localStorage.setItem(
-    PRIVATE_KEY_KEY,
-    Array.from(privateKey)
-      .map((b: number) => b.toString(16).padStart(2, '0'))
-      .join('')
-  );
-
-  console.log('[Protocol] Generated new Ed25519 device identity:', {
-    deviceId,
-    publicKey: publicKey.slice(0, 20) + '...',
-  });
-
-  return {
-    deviceId,
-    publicKey,
-    privateKey,
-  };
-}
+// ---- Device Identity Helpers (Ed25519, Rust-backed) -----------------------
+//
+// The Ed25519 private key lives exclusively in the Rust backend (macOS/iOS
+// Keychain). JavaScript never sees the private key — only the resulting
+// signature and the public key cross the Rust/JS boundary via Tauri invoke.
 
 /**
  * Build the device authentication payload matching OpenClaw's format.
- * The payload is a pipe-delimited string that gets signed.
+ * The payload is a pipe-delimited string that gets signed in Rust.
  */
 function buildDeviceAuthPayload(params: {
   deviceId: string;
@@ -183,26 +98,16 @@ function buildDeviceAuthPayload(params: {
 }
 
 /**
- * Sign the device auth payload with the Ed25519 private key.
- * Returns base64-url encoded signature matching OpenClaw's format.
- */
-async function signDevicePayload(payload: string, privateKey: Uint8Array): Promise<string> {
-  const payloadBytes = new TextEncoder().encode(payload);
-  const signature = await ed25519.signAsync(payloadBytes, privateKey);
-  return base64UrlEncode(signature);
-}
-
-/**
- * Get the device ID from the stored or newly generated keypair.
- * This is useful for looking up stored tokens before building the full device identity.
+ * Get the device ID (SHA-256 of public key, hex-encoded).
+ * Delegates to Rust — no private key ever touches JavaScript.
  */
 export async function getDeviceId(): Promise<string> {
-  const { deviceId } = await getOrCreateEd25519Keypair();
-  return deviceId;
+  return invoke<string>('get_device_id');
 }
 
 /**
  * Build a ConnectDevice for the handshake with proper Ed25519 signing.
+ * Signing is performed in Rust; only the signature string is returned to JS.
  * Matches OpenClaw's exact device identity format and verification.
  */
 export async function buildDeviceIdentity(
@@ -212,10 +117,15 @@ export async function buildDeviceIdentity(
   scopes: string[],
   authToken?: string
 ): Promise<ConnectDevice> {
-  const { deviceId, publicKey, privateKey } = await getOrCreateEd25519Keypair();
+  // Both calls hit the Rust backend — keypair lives in the Keychain
+  const [deviceId, publicKey] = await Promise.all([
+    invoke<string>('get_device_id'),
+    invoke<string>('get_device_public_key'),
+  ]);
+
   const signedAt = Date.now();
 
-  // Build the complete payload that will be signed
+  // Build the payload string (same logic as before, public data only)
   const payload = buildDeviceAuthPayload({
     deviceId,
     clientId: clientInfo.id,
@@ -227,8 +137,8 @@ export async function buildDeviceIdentity(
     nonce,
   });
 
-  // Sign the full payload (not just the nonce!)
-  const signature = await signDevicePayload(payload, privateKey);
+  // Sign in Rust — private key never leaves the Keychain
+  const signature = await invoke<string>('sign_payload', { payload });
 
   return {
     id: deviceId,

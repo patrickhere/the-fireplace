@@ -3,12 +3,11 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useModelsStore } from '@/stores/models';
+import { useModelsStore, type ModelChoice } from '@/stores/models';
 import { useConnectionStore } from '@/stores/connection';
-import { useAgentsStore } from '@/stores/agents';
+import { useAgentsStore, type Agent } from '@/stores/agents';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
-import type { ModelChoice } from '@/stores/models';
-import type { Agent } from '@/stores/agents';
 
 // ---- Derive demon model assignments from agents store --------------------
 
@@ -74,17 +73,24 @@ function ModelCard({
 }: {
   model: ModelChoice;
   isCurrent: boolean;
-  onSelect: () => void;
+  onSelect: () => Promise<void>;
   assignedDemons: Agent[];
 }) {
   const [isSettling, setIsSettling] = useState(false);
+  const [settleError, setSettleError] = useState<string | null>(null);
   const tierInfo = classifyModel(`${model.provider}/${model.id}`);
   const badgeClasses = tierBadgeClasses(tierInfo.tier);
 
   const handleSet = async () => {
     setIsSettling(true);
-    onSelect();
-    setTimeout(() => setIsSettling(false), 1000);
+    setSettleError(null);
+    try {
+      await onSelect();
+    } catch (err) {
+      setSettleError(err instanceof Error ? err.message : 'Failed to set model');
+    } finally {
+      setIsSettling(false);
+    }
   };
 
   return (
@@ -136,14 +142,19 @@ function ModelCard({
         </div>
 
         {!isCurrent && (
-          <button
-            onClick={handleSet}
-            disabled={isSettling}
-            className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 hover:text-zinc-100 disabled:opacity-50"
-            type="button"
-          >
-            {isSettling ? 'Setting...' : 'Set Default'}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={handleSet}
+              disabled={isSettling}
+              className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 hover:text-zinc-100 disabled:opacity-50"
+              type="button"
+            >
+              {isSettling ? 'Setting...' : 'Set Default'}
+            </button>
+            {settleError && (
+              <span className="max-w-[120px] text-right text-xs text-red-400">{settleError}</span>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -233,19 +244,19 @@ export function Models() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && models.length === 0 ? (
-          <div className="text-sm text-zinc-400">Loading models...</div>
+        {error && models.length === 0 ? (
+          <ErrorState message={error} onRetry={load} />
+        ) : isLoading && models.length === 0 ? (
+          <LoadingSpinner message="Loading models..." />
         ) : models.length === 0 ? (
-          <div className="text-sm text-zinc-500">No models available. Click "Refresh" to load.</div>
+          <EmptyState
+            message="No models available"
+            detail='Click "Refresh" to load available models.'
+            action="Refresh"
+            onAction={load}
+          />
         ) : (
           <div className="space-y-6">
             {groupedModels.map(([provider, providerModels]) => (

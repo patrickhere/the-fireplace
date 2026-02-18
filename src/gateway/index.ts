@@ -60,6 +60,9 @@ export type {
   // Client ID / mode literals
   GatewayClientId,
   GatewayClientMode,
+  // Method & event catalogs
+  GatewayMethod,
+  GatewayEvent,
 } from './types';
 
 export { SIDE_EFFECTING_METHODS } from './types';

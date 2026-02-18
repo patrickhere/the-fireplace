@@ -27,6 +27,26 @@ export interface DemonStatus {
   };
 }
 
+// ---- Health Event Payload -------------------------------------------------
+
+/**
+ * Payload shape for the `health` gateway event.
+ * The gateway pushes agent health changes; we only use fields we recognise.
+ * All fields are optional — validate defensively.
+ */
+interface HealthEventPayload {
+  /** Agent/demon ID whose health changed. */
+  agentId?: string;
+  /** New health status string (e.g. "healthy", "degraded", "offline"). */
+  status?: string;
+  /** Human-readable reason for the status. */
+  reason?: string;
+  /** Epoch ms of when the health change was recorded. */
+  ts?: number;
+}
+
+// ---------------------------------------------------------------------------
+
 interface DemonHealthState {
   demons: DemonStatus[];
   isMonitoring: boolean;
@@ -34,6 +54,7 @@ interface DemonHealthState {
   // Internal refs (not serializable)
   _chatUnsub: Unsubscribe | null;
   _execUnsub: Unsubscribe | null;
+  _healthUnsub: Unsubscribe | null;
   _idleCheckInterval: ReturnType<typeof setInterval> | null;
   _execTimeouts: ReturnType<typeof setTimeout>[];
 
@@ -71,6 +92,7 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   isMonitoring: false,
   _chatUnsub: null,
   _execUnsub: null,
+  _healthUnsub: null,
   _idleCheckInterval: null,
   _execTimeouts: [],
 
@@ -199,6 +221,43 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
           set((state) => ({ _execTimeouts: [...state._execTimeouts, timeoutId] }));
         });
 
+        // Subscribe to health events for real-time agent status updates
+        const healthUnsub = subscribe<HealthEventPayload>('health', (payload) => {
+          if (
+            typeof payload !== 'object' ||
+            payload === null ||
+            typeof payload.agentId !== 'string'
+          ) {
+            // Health events without an agentId are gateway-level — not actionable here
+            return;
+          }
+
+          const { agentId, status } = payload;
+          if (!status) return;
+
+          set((state) => {
+            const demon = state.demons.find((d) => d.demonId === agentId);
+            if (!demon) return state;
+
+            let newState: DemonStatus['state'] = demon.state;
+            if (status === 'offline' || status === 'stopped') {
+              newState = 'offline';
+            } else if (status === 'degraded' || status === 'error') {
+              newState = 'error';
+            } else if (status === 'healthy' || status === 'idle') {
+              newState = demon.state === 'working' ? 'working' : 'idle';
+            }
+
+            if (newState === demon.state) return state;
+
+            return {
+              demons: state.demons.map((d) =>
+                d.demonId === agentId ? { ...d, state: newState, lastActivity: Date.now() } : d
+              ),
+            };
+          });
+        });
+
         // Periodic idle check — mark demons as idle if no activity for 5 min
         const idleCheckInterval = setInterval(() => {
           const { demons } = get();
@@ -217,6 +276,7 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
         set({
           _chatUnsub: chatUnsub,
           _execUnsub: execUnsub,
+          _healthUnsub: healthUnsub,
           _idleCheckInterval: idleCheckInterval,
         });
 
@@ -228,6 +288,7 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
           isMonitoring: false,
           _chatUnsub: null,
           _execUnsub: null,
+          _healthUnsub: null,
           _idleCheckInterval: null,
           _execTimeouts: [],
         });
@@ -236,15 +297,17 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
   },
 
   stopMonitoring: () => {
-    const { _chatUnsub, _execUnsub, _idleCheckInterval, _execTimeouts } = get();
+    const { _chatUnsub, _execUnsub, _healthUnsub, _idleCheckInterval, _execTimeouts } = get();
     _chatUnsub?.();
     _execUnsub?.();
+    _healthUnsub?.();
     if (_idleCheckInterval) clearInterval(_idleCheckInterval);
     for (const t of _execTimeouts) clearTimeout(t);
     set({
       isMonitoring: false,
       _chatUnsub: null,
       _execUnsub: null,
+      _healthUnsub: null,
       _idleCheckInterval: null,
       _execTimeouts: [],
     });

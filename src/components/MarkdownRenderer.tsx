@@ -3,10 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import { memo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { Components } from 'react-markdown';
 
 // Import highlight.js CSS theme
 import 'highlight.js/styles/github-dark.css';
@@ -14,7 +13,7 @@ import 'highlight.js/styles/github-dark.css';
 // ---- Props ----------------------------------------------------------------
 
 interface MarkdownRendererProps {
-  content: string;
+  content: unknown;
   className?: string;
 }
 
@@ -214,6 +213,10 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   className = '',
 }: MarkdownRendererProps) {
+  // Guard against non-string content — JSON.stringify objects as fallback
+  const safeContent =
+    typeof content === 'string' ? content : content == null ? '' : JSON.stringify(content, null, 2);
+
   return (
     <div className={`markdown-content ${className}`}>
       <ReactMarkdown
@@ -221,7 +224,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         rehypePlugins={[rehypeHighlight]}
         components={components}
       >
-        {content}
+        {safeContent}
       </ReactMarkdown>
     </div>
   );

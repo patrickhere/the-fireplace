@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Session Types --------------------------------------------------------
@@ -144,6 +145,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load sessions';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to load sessions:', err);
     }
   },
@@ -173,6 +175,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to preview session';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to preview session:', err);
     }
   },
@@ -189,11 +192,13 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         ...config,
       });
 
+      toast.success('Session updated');
       // Reload sessions to reflect changes
       get().loadSessions();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update session';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to patch session:', err);
     }
   },
@@ -210,11 +215,13 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         reason: 'reset',
       });
 
+      toast.success('Session reset');
       // Reload sessions to reflect changes
       get().loadSessions();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to reset session';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to reset session:', err);
     }
   },
@@ -222,6 +229,10 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
   deleteSession: async (key: string, deleteTranscript: boolean) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
+
+    // Optimistic remove
+    const previous = get().sessions;
+    set((state) => ({ sessions: state.sessions.filter((s) => s.key !== key) }));
 
     try {
       set({ error: null });
@@ -231,13 +242,13 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         deleteTranscript,
       });
 
-      // Remove session from local state
-      set((state) => ({
-        sessions: state.sessions.filter((s) => s.key !== key),
-      }));
+      toast.success('Session deleted');
     } catch (err) {
+      // Rollback on failure
+      set({ sessions: previous });
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete session';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to delete session:', err);
     }
   },
@@ -254,11 +265,13 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
         maxLines: 1000,
       });
 
+      toast.success('Session compacted');
       // Reload sessions to reflect changes
       get().loadSessions();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to compact session';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to compact session:', err);
     }
   },
@@ -280,6 +293,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load usage stats';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Sessions] Failed to load usage:', err);
     }
   },

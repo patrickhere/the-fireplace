@@ -37,11 +37,30 @@ import { retrieveDeviceToken, storeDeviceToken } from '@/lib/keychain';
 // ---- Constants ------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+// Leader election via BroadcastChannel
+const LEADER_CHANNEL_NAME = 'fireplace-gateway-leader';
+const LEADER_HEARTBEAT_INTERVAL_MS = 2_000;
+const LEADER_HEARTBEAT_TIMEOUT_MS = 1_200;
 const DEFAULT_RECONNECT_MIN_MS = 1_000;
 const DEFAULT_RECONNECT_MAX_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const IDEMPOTENCY_CACHE_MAX = 500;
 const IDEMPOTENCY_CACHE_TTL_MS = 5 * 60_000;
+
+// Tick watchdog: if no tick received within this multiplier × tickIntervalMs, reconnect
+const TICK_WATCHDOG_MULTIPLIER = 2;
+// Default tick interval to use when policy hasn't been received yet
+const DEFAULT_TICK_INTERVAL_MS = 30_000;
+// Watchdog poll period (how often we check for stale ticks)
+const WATCHDOG_POLL_INTERVAL_MS = 5_000;
+
+// Rate limiter: token bucket parameters
+const RATE_LIMIT_CAPACITY = 20; // max burst
+const RATE_LIMIT_REFILL_PER_SEC = 20; // sustained rate (tokens/second)
+
+// Minimum gateway server version supported (semver prefix check)
+const MIN_GATEWAY_VERSION = '2026.1.0';
 
 // ---- Custom Error ---------------------------------------------------------
 
@@ -133,6 +152,22 @@ export class GatewayClient {
 
   // -- Tick / watchdog
   private _lastTickReceivedAt = 0;
+  private _watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  // -- Visibility change listener (iOS foreground/background)
+  private _visibilityHandler: (() => void) | null = null;
+
+  // -- Leader election (BroadcastChannel)
+  private _leaderChannel: BroadcastChannel | null = null;
+  private _isLeader = false;
+  private _leaderHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private _beforeUnloadHandler: (() => void) | null = null;
+
+  // -- Rate limiter (token bucket)
+  private _rlTokens = RATE_LIMIT_CAPACITY;
+  private _rlLastRefillAt = Date.now();
+  private _rlQueue: Array<() => void> = [];
+  private _rlDrainTimer: ReturnType<typeof setTimeout> | null = null;
 
   // -- Idempotency key tracking
   private idempotencyCache: IdempotencyCacheEntry[] = [];
@@ -275,6 +310,16 @@ export class GatewayClient {
     this.cancelReconnectTimer();
     this._lastError = null;
 
+    // Leader election: ensure only one tab maintains a WebSocket connection
+    const isLeader = await this.tryClaimLeadership();
+    if (!isLeader) {
+      // Another tab is already connected — do not open a duplicate socket
+      if (this._state === 'reconnecting') {
+        this.setState('disconnected');
+      }
+      return;
+    }
+
     const url = urlOverride ?? this.config.url;
 
     this.setState('connecting');
@@ -328,6 +373,9 @@ export class GatewayClient {
     console.log('[Gateway] Disconnecting (intentional)');
     this.intentionalClose = true;
     this.cancelReconnectTimer();
+    this.stopWatchdog();
+    this.removeVisibilityListener();
+    this.releaseLeadership();
     if (this.ws) {
       // Close with normal closure code
       this.ws.close(1000, 'Client disconnect');
@@ -373,6 +421,9 @@ export class GatewayClient {
     if (this._state !== 'connected') {
       throw new Error(`Cannot send request: state is "${this._state}", expected "connected"`);
     }
+
+    // Rate limiting: wait for a token before proceeding
+    await this.acquireRateLimitToken(method);
 
     // Determine idempotency key
     let idempotencyKey = options?.idempotencyKey;
@@ -566,8 +617,9 @@ export class GatewayClient {
     if (frame.seq !== undefined) {
       if (frame.seq > this._lastSeq + 1 && this._lastSeq > 0) {
         console.warn(
-          `[Gateway] Event sequence gap: expected ${this._lastSeq + 1}, got ${frame.seq}`
+          `[Gateway] Event sequence gap: expected ${this._lastSeq + 1}, got ${frame.seq} — requesting state refresh`
         );
+        this.requestStateRefresh();
       }
       this._lastSeq = frame.seq;
     }
@@ -737,23 +789,25 @@ export class GatewayClient {
 
     // Persist device token to keychain if provided
     if (payload.auth?.deviceToken) {
-      const deviceId = localStorage.getItem('openclaw_device_id');
-      if (deviceId) {
-        storeDeviceToken(
-          deviceId,
-          this.config.url,
-          payload.auth.deviceToken,
-          payload.auth.role,
-          payload.auth.scopes,
-          payload.auth.issuedAtMs ?? Date.now()
-        ).catch((err) => {
+      getDeviceId()
+        .then((deviceId) =>
+          storeDeviceToken(
+            deviceId,
+            this.config.url,
+            payload.auth!.deviceToken!,
+            payload.auth!.role,
+            payload.auth!.scopes,
+            payload.auth!.issuedAtMs ?? Date.now()
+          )
+        )
+        .catch((err) => {
           // Log keychain storage errors but do not fail the connection
           console.warn('[Gateway] Failed to store device token in keychain:', err);
         });
-      } else {
-        console.warn('[Gateway] Cannot store device token: device ID not found in localStorage');
-      }
     }
+
+    // Check gateway version compatibility
+    this.checkGatewayVersion(payload.server.version);
 
     // Reset reconnect state on successful connection
     this.reconnect.attempts = 0;
@@ -761,6 +815,12 @@ export class GatewayClient {
 
     // Mark connected
     this.setState('connected');
+
+    // Start tick watchdog
+    this.startWatchdog();
+
+    // Register visibility listener for iOS background/foreground
+    this.registerVisibilityListener();
 
     // Resolve the connect() promise
     this.clearHandshake();
@@ -791,6 +851,210 @@ export class GatewayClient {
   /** Timestamp (ms since epoch) of the last tick event received from server. */
   get lastTickReceivedAt(): number {
     return this._lastTickReceivedAt;
+  }
+
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    this._lastTickReceivedAt = Date.now(); // treat connection as a fresh tick
+
+    this._watchdogTimer = setInterval(() => {
+      if (this._state !== 'connected') return;
+
+      const tickInterval = this._serverPolicy?.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
+      const threshold = TICK_WATCHDOG_MULTIPLIER * tickInterval;
+      const elapsed = Date.now() - this._lastTickReceivedAt;
+
+      if (elapsed > threshold) {
+        console.warn(
+          `[Gateway] Tick watchdog: no tick received for ${elapsed}ms (threshold ${threshold}ms) — triggering reconnect`
+        );
+        this.stopWatchdog();
+        this.removeVisibilityListener();
+        // Close the socket; handleClose will schedule reconnect
+        if (this.ws) {
+          this.ws.close(4001, 'Tick watchdog timeout');
+          this.ws = null;
+        }
+      }
+    }, WATCHDOG_POLL_INTERVAL_MS);
+  }
+
+  private stopWatchdog(): void {
+    if (this._watchdogTimer !== null) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
+    }
+  }
+
+  // ---- Internals: Visibility / iOS Lifecycle ------------------------------
+
+  private registerVisibilityListener(): void {
+    this.removeVisibilityListener();
+
+    const handler = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const tickInterval = this._serverPolicy?.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
+      const threshold = TICK_WATCHDOG_MULTIPLIER * tickInterval;
+      const elapsed = Date.now() - this._lastTickReceivedAt;
+
+      if (this._state !== 'connected' || elapsed > threshold) {
+        console.warn(
+          `[Gateway] Visibility resumed — connection stale (${elapsed}ms since last tick, state=${this._state}) — reconnecting`
+        );
+        this.stopWatchdog();
+        this.removeVisibilityListener();
+        if (this.ws) {
+          this.ws.close(4002, 'Visibility resume reconnect');
+          this.ws = null;
+        } else {
+          // Not connected at all — trigger reconnect path directly
+          this.scheduleReconnect();
+        }
+      } else {
+        console.log('[Gateway] Visibility resumed — connection still healthy');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handler);
+    this._visibilityHandler = handler;
+  }
+
+  private removeVisibilityListener(): void {
+    if (this._visibilityHandler !== null) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+  }
+
+  // ---- Internals: Rate Limiter (Token Bucket) -----------------------------
+
+  private refillRateLimitTokens(): void {
+    const now = Date.now();
+    const elapsed = (now - this._rlLastRefillAt) / 1000; // seconds
+    const refill = elapsed * RATE_LIMIT_REFILL_PER_SEC;
+    this._rlTokens = Math.min(RATE_LIMIT_CAPACITY, this._rlTokens + refill);
+    this._rlLastRefillAt = now;
+  }
+
+  private acquireRateLimitToken(method: string): Promise<void> {
+    this.refillRateLimitTokens();
+
+    if (this._rlTokens >= 1) {
+      this._rlTokens -= 1;
+      return Promise.resolve();
+    }
+
+    // Queue the request — it will be released when tokens refill
+    console.warn(
+      `[Gateway] Rate limit reached — queuing "${method}" (queue depth: ${this._rlQueue.length + 1})`
+    );
+    return new Promise<void>((resolve) => {
+      this._rlQueue.push(resolve);
+      this.scheduleDrainRateLimitQueue();
+    });
+  }
+
+  private scheduleDrainRateLimitQueue(): void {
+    if (this._rlDrainTimer !== null) return;
+
+    const msPerToken = 1000 / RATE_LIMIT_REFILL_PER_SEC;
+    this._rlDrainTimer = setTimeout(() => {
+      this._rlDrainTimer = null;
+      this.refillRateLimitTokens();
+
+      while (this._rlQueue.length > 0 && this._rlTokens >= 1) {
+        this._rlTokens -= 1;
+        const next = this._rlQueue.shift();
+        if (next) next();
+      }
+
+      if (this._rlQueue.length > 0) {
+        this.scheduleDrainRateLimitQueue();
+      }
+    }, msPerToken);
+  }
+
+  // ---- Internals: State Refresh -------------------------------------------
+
+  /**
+   * Re-fetch critical gateway state after an event sequence gap.
+   * Emits a synthetic "state.refresh" event so stores can react.
+   */
+  private requestStateRefresh(): void {
+    if (this._state !== 'connected') return;
+
+    // Fire and forget — stores listen to the emitted events
+    void (async () => {
+      try {
+        console.log('[Gateway] Requesting state refresh after sequence gap...');
+        const [sessions, agents] = await Promise.all([
+          this.request('sessions.list').catch(() => null),
+          this.request('agents.list').catch(() => null),
+        ]);
+
+        // Emit a synthetic event so stores can pick up refreshed data
+        const synthFrame = {
+          event: 'state.refresh',
+          payload: { sessions, agents },
+        };
+        const handlers = this.eventHandlers.get('state.refresh');
+        if (handlers) {
+          for (const h of handlers) {
+            try {
+              h(synthFrame.payload);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        for (const h of this.wildcardHandlers) {
+          try {
+            h(synthFrame as EventFrame);
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch (err) {
+        console.warn('[Gateway] State refresh failed:', err);
+      }
+    })();
+  }
+
+  // ---- Internals: Version Compatibility -----------------------------------
+
+  /**
+   * Compare server version against the minimum required version.
+   * Logs a warning if the server version is below the minimum.
+   * Version format expected: YYYY.M.patch (e.g. "2026.1.29")
+   */
+  private checkGatewayVersion(version: string): void {
+    try {
+      const parse = (v: string): [number, number, number] => {
+        const parts = v.split('.').map((p) => parseInt(p, 10));
+        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+      };
+
+      const [minYear, minMonth, minPatch] = parse(MIN_GATEWAY_VERSION);
+      const [srvYear, srvMonth, srvPatch] = parse(version);
+
+      const isOk =
+        srvYear > minYear ||
+        (srvYear === minYear && srvMonth > minMonth) ||
+        (srvYear === minYear && srvMonth === minMonth && srvPatch >= minPatch);
+
+      if (!isOk) {
+        console.warn(
+          `[Gateway] Server version "${version}" is below the minimum supported ` +
+            `version "${MIN_GATEWAY_VERSION}". Some features may not work correctly. ` +
+            `Please update the OpenClaw gateway.`
+        );
+      } else {
+        console.log(`[Gateway] Server version "${version}" meets minimum requirement.`);
+      }
+    } catch {
+      console.warn(`[Gateway] Could not parse server version "${version}" for compatibility check`);
+    }
   }
 
   // ---- Internals: Send ----------------------------------------------------
@@ -945,6 +1209,132 @@ export class GatewayClient {
     }
   }
 
+  // ---- Leader Election ----------------------------------------------------
+
+  /**
+   * Try to claim leadership for this tab/window using BroadcastChannel.
+   *
+   * Returns true if this tab can proceed as the leader (i.e. no active
+   * leader was detected). Returns false if another tab is already leading,
+   * in which case we should NOT open a new WebSocket.
+   *
+   * Gracefully returns true when BroadcastChannel is unavailable
+   * (older browsers, iOS WKWebView) so the connection always proceeds.
+   */
+  private async tryClaimLeadership(): Promise<boolean> {
+    if (typeof BroadcastChannel === 'undefined') {
+      // Not available — skip leader election and proceed
+      return true;
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let channel: BroadcastChannel;
+      try {
+        channel = new BroadcastChannel(LEADER_CHANNEL_NAME);
+      } catch {
+        // BroadcastChannel creation failed — proceed without leader election
+        resolve(true);
+        return;
+      }
+
+      let otherLeaderSeen = false;
+
+      channel.onmessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string };
+        if (data?.type === 'heartbeat') {
+          otherLeaderSeen = true;
+        }
+      };
+
+      // Wait briefly to see if another tab broadcasts a heartbeat
+      const timeout = setTimeout(() => {
+        channel.close();
+        if (otherLeaderSeen) {
+          console.warn(
+            '[Gateway] Another tab is already the gateway leader — skipping WebSocket connection'
+          );
+          resolve(false);
+        } else {
+          // We are the leader — keep the channel and start heartbeating
+          this._leaderChannel = new BroadcastChannel(LEADER_CHANNEL_NAME);
+          this._leaderChannel.onmessage = (leaderEvent: MessageEvent) => {
+            const data = leaderEvent.data as { type?: string };
+            if (data?.type === 'ping') {
+              try {
+                this._leaderChannel?.postMessage({ type: 'heartbeat' });
+              } catch {
+                // Ignore channel write failures
+              }
+            }
+          };
+          this._isLeader = true;
+          this.startLeaderHeartbeat();
+          this.registerBeforeUnloadHandler();
+          resolve(true);
+        }
+      }, LEADER_HEARTBEAT_TIMEOUT_MS);
+
+      // Announce we are checking — ask existing leaders to reply
+      channel.postMessage({ type: 'ping' });
+
+      // If we receive our own broadcast back, it doesn't count
+      void timeout; // suppress lint
+    });
+  }
+
+  private startLeaderHeartbeat(): void {
+    this.stopLeaderHeartbeat();
+    this._leaderHeartbeatTimer = setInterval(() => {
+      if (this._leaderChannel) {
+        try {
+          this._leaderChannel.postMessage({ type: 'heartbeat' });
+        } catch {
+          // Channel may have been closed
+        }
+      }
+    }, LEADER_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopLeaderHeartbeat(): void {
+    if (this._leaderHeartbeatTimer !== null) {
+      clearInterval(this._leaderHeartbeatTimer);
+      this._leaderHeartbeatTimer = null;
+    }
+  }
+
+  private registerBeforeUnloadHandler(): void {
+    if (this._beforeUnloadHandler) return;
+    this._beforeUnloadHandler = () => {
+      if (this._leaderChannel && this._isLeader) {
+        try {
+          this._leaderChannel.postMessage({ type: 'leader-release' });
+        } catch {
+          // Ignore — we're unloading anyway
+        }
+      }
+      this.releaseLeadership();
+    };
+    window.addEventListener('beforeunload', this._beforeUnloadHandler, { once: true });
+  }
+
+  private releaseLeadership(): void {
+    this.stopLeaderHeartbeat();
+    if (this._beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+      this._beforeUnloadHandler = null;
+    }
+    if (this._leaderChannel) {
+      try {
+        this._leaderChannel.onmessage = null;
+        this._leaderChannel.close();
+      } catch {
+        /* ignore */
+      }
+      this._leaderChannel = null;
+    }
+    this._isLeader = false;
+  }
+
   // ---- Destroy ------------------------------------------------------------
 
   /**
@@ -952,7 +1342,18 @@ export class GatewayClient {
    * The client instance should not be reused after calling destroy().
    */
   destroy(): void {
+    this.releaseLeadership();
     this.disconnect();
+    this.stopWatchdog();
+    this.removeVisibilityListener();
+    // Cancel any pending rate-limit drain timer and flush waiting resolvers
+    if (this._rlDrainTimer !== null) {
+      clearTimeout(this._rlDrainTimer);
+      this._rlDrainTimer = null;
+    }
+    // Resolve queued rate-limit waiters so they don't leak
+    for (const resolve of this._rlQueue) resolve();
+    this._rlQueue = [];
     this.eventHandlers.clear();
     this.wildcardHandlers.clear();
     this.stateListeners.clear();

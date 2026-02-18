@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Types ----------------------------------------------------------------
@@ -62,6 +63,19 @@ export interface ExecApprovalsSnapshot {
   file: ExecApprovalsFile;
 }
 
+// ---- Approval Resolved Payload --------------------------------------------
+
+/**
+ * Payload shape for the `exec.approval.resolved` gateway event.
+ * Fired when any client resolves a pending approval.
+ */
+interface ExecApprovalResolvedPayload {
+  id?: string;
+  decision?: 'approve' | 'deny';
+  resolvedBy?: string;
+  resolvedAt?: number;
+}
+
 // ---- Store Types ----------------------------------------------------------
 
 interface ApprovalsState {
@@ -73,8 +87,9 @@ interface ApprovalsState {
   isLoading: boolean;
   error: string | null;
 
-  // Event subscription
+  // Event subscriptions (requested + resolved)
   eventUnsubscribe: Unsubscribe | null;
+  resolvedUnsubscribe: Unsubscribe | null;
 
   // Actions
   loadApprovals: () => Promise<void>;
@@ -95,6 +110,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   isLoading: false,
   error: null,
   eventUnsubscribe: null,
+  resolvedUnsubscribe: null,
 
   loadApprovals: async () => {
     const { useConnectionStore } = await import('./connection');
@@ -112,6 +128,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load approvals';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Approvals] Failed to load approvals:', err);
     }
   },
@@ -129,11 +146,13 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
         baseHash: baseHash ?? snapshot?.hash,
       });
 
+      toast.success('Approvals config saved');
       // Reload after save
       get().loadApprovals();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to save approvals';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Approvals] Failed to save approvals:', err);
     }
   },
@@ -147,21 +166,22 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
 
       await request('exec.approval.resolve', { id, decision });
 
+      toast.success(decision === 'approve' ? 'Approved' : 'Rejected');
       // Remove from pending
       get().removePendingRequest(id);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to resolve approval';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Approvals] Failed to resolve approval:', err);
     }
   },
 
   subscribeToEvents: () => {
-    const { eventUnsubscribe } = get();
+    const { eventUnsubscribe, resolvedUnsubscribe } = get();
 
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-    }
+    if (eventUnsubscribe) eventUnsubscribe();
+    if (resolvedUnsubscribe) resolvedUnsubscribe();
 
     (async () => {
       const { useConnectionStore } = await import('./connection');
@@ -180,16 +200,27 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
         }));
       });
 
-      set({ eventUnsubscribe: unsub });
+      const resolvedUnsub = subscribe<ExecApprovalResolvedPayload>(
+        'exec.approval.resolved',
+        (payload) => {
+          if (typeof payload !== 'object' || payload === null || typeof payload.id !== 'string') {
+            console.warn('[Approvals] Received malformed resolved event, ignoring:', payload);
+            return;
+          }
+          console.log('[Approvals] Approval resolved by remote:', payload);
+          get().removePendingRequest(payload.id);
+        }
+      );
+
+      set({ eventUnsubscribe: unsub, resolvedUnsubscribe: resolvedUnsub });
     })();
   },
 
   unsubscribeFromEvents: () => {
-    const { eventUnsubscribe } = get();
-    if (eventUnsubscribe) {
-      eventUnsubscribe();
-      set({ eventUnsubscribe: null });
-    }
+    const { eventUnsubscribe, resolvedUnsubscribe } = get();
+    if (eventUnsubscribe) eventUnsubscribe();
+    if (resolvedUnsubscribe) resolvedUnsubscribe();
+    set({ eventUnsubscribe: null, resolvedUnsubscribe: null });
   },
 
   removePendingRequest: (id: string) => {
@@ -207,6 +238,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
       isLoading: false,
       error: null,
       eventUnsubscribe: null,
+      resolvedUnsubscribe: null,
     });
   },
 }));

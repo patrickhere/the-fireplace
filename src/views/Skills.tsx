@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState, useCallback } from 'react';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillsStore, type SkillStatus } from '@/stores/skills';
 import { useConnectionStore } from '@/stores/connection';
-import type { SkillStatus } from '@/stores/skills';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 
 // ---- Environment Variable Editor ------------------------------------------
 
@@ -312,17 +312,12 @@ export function Skills() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && skills.length === 0 ? (
-          <div className="text-sm text-zinc-400">Loading skills...</div>
+        {error && skills.length === 0 ? (
+          <ErrorState message={error} onRetry={load} />
+        ) : isLoading && skills.length === 0 ? (
+          <LoadingSpinner message="Loading skills..." />
         ) : (
           <div className="space-y-4">
             {/* Install Panel */}
@@ -357,9 +352,10 @@ export function Skills() {
             )}
 
             {skills.length === 0 && !isLoading && (
-              <div className="text-sm text-zinc-500">
-                No skills installed. Use the install panel above to add one.
-              </div>
+              <EmptyState
+                message="No skills installed"
+                detail="Use the install panel above to add a skill."
+              />
             )}
           </div>
         )}

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useEffect } from 'react';
+import { Toaster } from 'sonner';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { useConnectionStore } from '@/stores/connection';
 import { Sidebar } from '@/components/Sidebar';
@@ -41,6 +42,9 @@ function App() {
 
   return (
     <BrowserRouter>
+      {/* Toast notifications */}
+      <Toaster theme="dark" richColors position="bottom-right" />
+
       {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
       <GlobalShortcuts />
 

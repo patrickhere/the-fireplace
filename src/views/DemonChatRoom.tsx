@@ -2,11 +2,11 @@
 // Demon Chat Room — Inter-Demon Communication View
 // ---------------------------------------------------------------------------
 
-import { useEffect, useRef, useState, useMemo } from 'react';
-import { useDemonChatStore } from '@/stores/demonChat';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useDemonChatStore, type DemonChatMessage } from '@/stores/demonChat';
 import { useAgentsStore } from '@/stores/agents';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
-import type { DemonChatMessage } from '@/stores/demonChat';
+import { EmptyState } from '@/components/StateIndicators';
 
 // ---- Color Palette --------------------------------------------------------
 
@@ -90,6 +90,13 @@ export function DemonChatRoom() {
   const [injectText, setInjectText] = useState('');
   const [isSending, setIsSending] = useState(false);
 
+  // @mention autocomplete state
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionAtIndex, setMentionAtIndex] = useState<number>(-1);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mentionDropdownRef = useRef<HTMLDivElement>(null);
+
   const feedRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
@@ -105,6 +112,24 @@ export function DemonChatRoom() {
     startListening();
     return () => teardown();
   }, [startListening, teardown]);
+
+  // Dismiss @mention dropdown on outside click
+  useEffect(() => {
+    if (mentionQuery === null) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        mentionDropdownRef.current &&
+        !mentionDropdownRef.current.contains(e.target as Node) &&
+        textareaRef.current &&
+        !textareaRef.current.contains(e.target as Node)
+      ) {
+        setMentionQuery(null);
+        setMentionAtIndex(-1);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mentionQuery]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -124,6 +149,65 @@ export function DemonChatRoom() {
     [messages, activeDemonFilters, getFilteredMessages]
   );
 
+  // @mention — filtered agent suggestions
+  const mentionSuggestions = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    return agents.filter((a) => {
+      const name = (a.identity?.name ?? a.id).toLowerCase();
+      return name.startsWith(q) || a.id.toLowerCase().startsWith(q);
+    });
+  }, [mentionQuery, agents]);
+
+  // Insert selected mention into textarea text
+  const commitMention = useCallback(
+    (agentIndex: number) => {
+      const agent = mentionSuggestions[agentIndex];
+      if (!agent || mentionAtIndex === -1) return;
+
+      const name = agent.identity?.name ?? agent.id;
+      const before = injectText.slice(0, mentionAtIndex);
+      const after = injectText.slice(mentionAtIndex + 1 + (mentionQuery?.length ?? 0));
+      const newText = `${before}@${name} ${after}`;
+
+      setInjectText(newText);
+      setMentionQuery(null);
+      setMentionAtIndex(-1);
+
+      // Move cursor to after the inserted mention
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          const pos = before.length + name.length + 2; // @name + space
+          textareaRef.current.setSelectionRange(pos, pos);
+          textareaRef.current.focus();
+        }
+      });
+    },
+    [mentionSuggestions, mentionAtIndex, mentionQuery, injectText]
+  );
+
+  // Detect @mention trigger on text change
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInjectText(value);
+
+    const cursor = e.target.selectionStart ?? value.length;
+
+    // Find the last @ before the cursor that isn't preceded by a word char
+    const textBeforeCursor = value.slice(0, cursor);
+    const atMatch = /(?:^|[\s])(@(\w*))$/.exec(textBeforeCursor);
+
+    if (atMatch) {
+      const atPos = textBeforeCursor.lastIndexOf('@');
+      setMentionAtIndex(atPos);
+      setMentionQuery(atMatch[2] ?? '');
+      setMentionSelectedIndex(0);
+    } else {
+      setMentionQuery(null);
+      setMentionAtIndex(-1);
+    }
+  };
+
   const handleInject = async () => {
     if (!injectDemonId || !injectText.trim()) return;
     setIsSending(true);
@@ -138,6 +222,33 @@ export function DemonChatRoom() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle @mention dropdown navigation first
+    if (mentionQuery !== null && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionSelectedIndex((i) => (i + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSelectedIndex(
+          (i) => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length
+        );
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        commitMention(mentionSelectedIndex);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionQuery(null);
+        setMentionAtIndex(-1);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && e.metaKey) {
       e.preventDefault();
       handleInject();
@@ -184,46 +295,77 @@ export function DemonChatRoom() {
         className="flex-1 space-y-1 overflow-y-auto px-3 py-2"
       >
         {filteredMessages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-600">
-            {isListening ? 'Listening for demon activity...' : 'Not connected'}
-          </div>
+          <EmptyState
+            message={isListening ? 'Listening for demon activity...' : 'Not connected'}
+            detail={isListening ? 'Messages will appear as demons communicate.' : undefined}
+          />
         ) : (
           filteredMessages.map((msg) => <ChatMessage key={msg.id} msg={msg} />)
         )}
       </div>
 
       {/* Inject bar */}
-      <div className="flex items-end gap-2 border-t border-zinc-800 px-3 py-2">
-        <select
-          value={injectDemonId}
-          onChange={(e) => setInjectDemonId(e.target.value)}
-          className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
-        >
-          <option value="">Select demon...</option>
-          {agents.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.identity?.emoji ?? ''} {agent.identity?.name ?? agent.id}
-            </option>
-          ))}
-        </select>
+      <div className="border-t border-zinc-800 px-3 py-2">
+        {/* @mention dropdown — rendered above the textarea */}
+        {mentionQuery !== null && mentionSuggestions.length > 0 && (
+          <div
+            ref={mentionDropdownRef}
+            className="mb-1 overflow-hidden rounded border border-zinc-700 bg-zinc-800 shadow-lg"
+          >
+            {mentionSuggestions.map((agent, idx) => (
+              <button
+                key={agent.id}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault(); // prevent textarea blur
+                  commitMention(idx);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
+                  idx === mentionSelectedIndex
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'text-zinc-300 hover:bg-zinc-700'
+                }`}
+              >
+                <span>{agent.identity?.emoji ?? '👤'}</span>
+                <span>{agent.identity?.name ?? agent.id}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
-        <textarea
-          value={injectText}
-          onChange={(e) => setInjectText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Inject message... (Cmd+Enter to send)"
-          rows={1}
-          className="flex-1 resize-none rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
-        />
+        <div className="flex items-end gap-2">
+          <select
+            value={injectDemonId}
+            onChange={(e) => setInjectDemonId(e.target.value)}
+            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+          >
+            <option value="">Select demon...</option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.identity?.emoji ?? ''} {agent.identity?.name ?? agent.id}
+              </option>
+            ))}
+          </select>
 
-        <button
-          type="button"
-          onClick={handleInject}
-          disabled={!injectDemonId || !injectText.trim() || isSending}
-          className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-colors hover:bg-amber-500 disabled:opacity-40"
-        >
-          Send
-        </button>
+          <textarea
+            ref={textareaRef}
+            value={injectText}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Inject message... (Cmd+Enter to send, @ to mention)"
+            rows={1}
+            className="flex-1 resize-none rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500"
+          />
+
+          <button
+            type="button"
+            onClick={handleInject}
+            disabled={!injectDemonId || !injectText.trim() || isSending}
+            className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-colors hover:bg-amber-500 disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -5,7 +5,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useCronStore } from '@/stores/cron';
 import { useConnectionStore } from '@/stores/connection';
-import { useAgentsStore } from '@/stores/agents';
+import { useAgentsStore, type Agent } from '@/stores/agents';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 import type {
   CronJob,
   CronAddParams,
@@ -13,9 +14,8 @@ import type {
   CronPayload,
   CronRunLogEntry,
 } from '@/stores/cron';
-import type { Agent } from '@/stores/agents';
 
-const DEMON_PULSE_CRON_ID = '893f56fb-02d3-4521-8be4-ed474fe26c60';
+// No hardcoded pulse cron ID — looked up dynamically from jobs list.
 
 interface VerifiedCheckEntry {
   command: string;
@@ -235,6 +235,22 @@ function RunHistoryTable({ runs }: { runs: CronRunLogEntry[] }) {
 
 // ---- Add Job Form ---------------------------------------------------------
 
+// Validate a cron expression: 5 or 6 space-separated fields, each matching a valid cron token.
+// Valid token pattern: numbers, ranges (1-5), steps (*/5, 1-5/2), lists (1,2,3), or wildcard (*).
+function validateCronExpression(expr: string): string | null {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length < 5 || fields.length > 6) {
+    return 'Cron expression must have 5 or 6 fields (e.g. "*/5 * * * *")';
+  }
+  const tokenPattern = /^(\*|\d+(-\d+)?(\/\d+)?)(,(\*|\d+(-\d+)?(\/\d+)?))*$|^\*\/\d+$/;
+  for (const field of fields) {
+    if (!tokenPattern.test(field)) {
+      return `Invalid cron field: "${field}"`;
+    }
+  }
+  return null;
+}
+
 function AddJobForm({
   onSubmit,
   onCancel,
@@ -259,6 +275,8 @@ function AddJobForm({
   const [payloadMessage, setPayloadMessage] = useState(initialValues?.payloadMessage ?? '');
   const [agentId, setAgentId] = useState(initialValues?.agentId ?? '');
   const [enabled, setEnabled] = useState(true);
+  const [nameError, setNameError] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
 
   // Sync initial values when template changes
   useEffect(() => {
@@ -270,13 +288,40 @@ function AddJobForm({
       setPayloadKind(initialValues.payloadKind ?? 'agentTurn');
       setPayloadMessage(initialValues.payloadMessage ?? '');
       setAgentId(initialValues.agentId ?? '');
+      setNameError('');
+      setScheduleError('');
     }
   }, [initialValues]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      if (!name.trim() || !scheduleValue.trim()) return;
+
+      // Validate required fields
+      let valid = true;
+      if (!name.trim()) {
+        setNameError('Name is required');
+        valid = false;
+      } else {
+        setNameError('');
+      }
+
+      if (!scheduleValue.trim()) {
+        setScheduleError('Schedule value is required');
+        valid = false;
+      } else if (scheduleKind === 'cron') {
+        const cronErr = validateCronExpression(scheduleValue);
+        if (cronErr) {
+          setScheduleError(cronErr);
+          valid = false;
+        } else {
+          setScheduleError('');
+        }
+      } else {
+        setScheduleError('');
+      }
+
+      if (!valid) return;
 
       const schedule: CronSchedule = {
         kind: scheduleKind,
@@ -329,10 +374,14 @@ function AddJobForm({
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+            onChange={(e) => {
+              setName(e.target.value);
+              if (nameError) setNameError('');
+            }}
+            className={`w-full rounded-md border bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 ${nameError ? 'border-red-500' : 'border-zinc-700'}`}
             placeholder="My cron job"
           />
+          {nameError && <p className="mt-1 text-xs text-red-400">{nameError}</p>}
         </div>
         <div>
           <label className="mb-1 block text-xs text-zinc-500">Agent ID</label>
@@ -381,8 +430,11 @@ function AddJobForm({
           <input
             type="text"
             value={scheduleValue}
-            onChange={(e) => setScheduleValue(e.target.value)}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+            onChange={(e) => {
+              setScheduleValue(e.target.value);
+              if (scheduleError) setScheduleError('');
+            }}
+            className={`w-full rounded-md border bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500 ${scheduleError ? 'border-red-500' : 'border-zinc-700'}`}
             placeholder={
               scheduleKind === 'cron'
                 ? '*/5 * * * *'
@@ -391,6 +443,7 @@ function AddJobForm({
                   : '30m'
             }
           />
+          {scheduleError && <p className="mt-1 text-xs text-red-400">{scheduleError}</p>}
         </div>
         <div>
           <label className="mb-1 block text-xs text-zinc-500">Timezone</label>
@@ -750,7 +803,11 @@ export function Cron() {
 
   const renderVerifiedOutput = useCallback((entry: VerifiedCheckEntry) => {
     if (!entry.command.includes('cron.runs')) {
-      return <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">{entry.output}</pre>;
+      return (
+        <pre className="overflow-x-auto text-xs whitespace-pre-wrap text-zinc-200">
+          {entry.output}
+        </pre>
+      );
     }
 
     try {
@@ -801,14 +858,18 @@ export function Cron() {
             <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300">
               Show raw JSON
             </summary>
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">
+            <pre className="mt-2 overflow-x-auto text-xs whitespace-pre-wrap text-zinc-200">
               {entry.output}
             </pre>
           </details>
         </div>
       );
     } catch {
-      return <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-200">{entry.output}</pre>;
+      return (
+        <pre className="overflow-x-auto text-xs whitespace-pre-wrap text-zinc-200">
+          {entry.output}
+        </pre>
+      );
     }
   }, []);
 
@@ -868,10 +929,36 @@ export function Cron() {
       return;
     }
 
+    // Dynamically find a pulse/demon cron job from the loaded jobs list
+    // instead of relying on a hardcoded UUID.
+    const pulseJob = jobs.find((j) => {
+      const tags = (j as CronJob & { tags?: string[] }).tags ?? [];
+      if (tags.some((t) => t === 'demon-pulse' || t === 'demon_pulse' || t === 'pulse')) {
+        return true;
+      }
+      if (j.payload?.kind === 'agentTurn' && Boolean(j.agentId)) {
+        return true;
+      }
+      const name = (j.name ?? '').toLowerCase();
+      return name.includes('pulse') || name.includes('demon');
+    });
+
+    if (!pulseJob) {
+      entries.push({
+        command: 'cron.run (pulse job lookup)',
+        output:
+          'No pulse/demon cron job found in the loaded job list. Load jobs first or create one.',
+        isError: true,
+      });
+      setVerifiedCheckEntries([...entries]);
+      setIsRunningVerifiedCheck(false);
+      return;
+    }
+
     const ok2 = await runStep(
-      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.run --json --params '{\"id\":\"${DEMON_PULSE_CRON_ID}\"}'`,
+      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.run --json --params '{"id":"${pulseJob.id}"}'`,
       'cron.run',
-      { id: DEMON_PULSE_CRON_ID }
+      { id: pulseJob.id }
     );
     if (!ok2) {
       setIsRunningVerifiedCheck(false);
@@ -879,13 +966,13 @@ export function Cron() {
     }
 
     await runStep(
-      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.runs --json --params '{\"id\":\"${DEMON_PULSE_CRON_ID}\",\"limit\":10}'`,
+      `/Users/admin/.nvm/versions/node/v24.13.1/bin/openclaw gateway call cron.runs --json --params '{"id":"${pulseJob.id}","limit":10}'`,
       'cron.runs',
-      { id: DEMON_PULSE_CRON_ID, limit: 10 }
+      { id: pulseJob.id, limit: 10 }
     );
 
     setIsRunningVerifiedCheck(false);
-  }, [request]);
+  }, [request, jobs]);
 
   const sortedJobs = useMemo(() => {
     let filtered = [...jobs];
@@ -970,13 +1057,6 @@ export function Cron() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 px-3 py-2">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3">
         {/* Verified health check output */}
@@ -998,7 +1078,9 @@ export function Cron() {
                 <div
                   key={`${entry.command}-${entry.output.slice(0, 16)}`}
                   className={`rounded border p-2 ${
-                    entry.isError ? 'border-red-700 bg-red-950/20' : 'border-zinc-700 bg-zinc-950/30'
+                    entry.isError
+                      ? 'border-red-700 bg-red-950/20'
+                      : 'border-zinc-700 bg-zinc-950/30'
                   }`}
                 >
                   <div className="mb-1 text-xs text-zinc-400">{entry.command}</div>
@@ -1023,22 +1105,20 @@ export function Cron() {
           </div>
         )}
 
-        {isLoading && jobs.length === 0 ? (
-          <div className="text-sm text-zinc-400">Loading cron jobs...</div>
+        {error && jobs.length === 0 ? (
+          <ErrorState message={error} onRetry={loadJobs} />
+        ) : isLoading && jobs.length === 0 ? (
+          <LoadingSpinner message="Loading cron jobs..." />
         ) : jobs.length === 0 ? (
-          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 p-4 text-center">
-            <p className="text-sm text-zinc-500">No cron jobs configured.</p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Click "Add Job" to create a scheduled automation.
-            </p>
-          </div>
+          <EmptyState
+            message="No cron jobs configured"
+            detail='Click "Add Job" to create a scheduled automation.'
+          />
         ) : sortedJobs.length === 0 && demonTasksOnly ? (
-          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 p-4 text-center">
-            <p className="text-sm text-zinc-500">No demon tasks found.</p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Use "Quick Create" to add common demon task templates.
-            </p>
-          </div>
+          <EmptyState
+            message="No demon tasks found"
+            detail='Use "Quick Create" to add common demon task templates.'
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">

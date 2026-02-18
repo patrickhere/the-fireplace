@@ -3,10 +3,15 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useCallback, useState } from 'react';
-import { useUsageStore } from '@/stores/usage';
+import {
+  useUsageStore,
+  type SessionUsageEntry,
+  type DemonUsageEntry,
+  type ModelDistributionEntry,
+} from '@/stores/usage';
 import { useConnectionStore } from '@/stores/connection';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
-import type { SessionUsageEntry, DemonUsageEntry, ModelDistributionEntry } from '@/stores/usage';
 
 // ---- Token Formatter ------------------------------------------------------
 
@@ -309,17 +314,19 @@ export function Usage() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && !usage ? (
-          <div className="text-sm text-zinc-400">Loading usage data...</div>
+        {error && !usage ? (
+          <ErrorState message={error} onRetry={load} />
+        ) : isLoading && !usage ? (
+          <LoadingSpinner message="Loading usage data..." />
+        ) : !usage ? (
+          <EmptyState
+            message="No usage data available"
+            detail='Click "Refresh" to load usage statistics.'
+            action="Refresh"
+            onAction={load}
+          />
         ) : (
           <div className="space-y-6">
             {/* Summary Cards */}
@@ -382,9 +389,10 @@ export function Usage() {
               </h2>
 
               {sessionUsage.length === 0 ? (
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 text-sm text-zinc-500">
-                  No session usage data available
-                </div>
+                <EmptyState
+                  message="No session usage data"
+                  detail="Usage data will appear after sessions are active."
+                />
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900">
                   <table className="w-full text-left">

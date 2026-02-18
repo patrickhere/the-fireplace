@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useCallback } from 'react';
-import { useDemonHealthStore } from '@/stores/demonHealth';
+import { useDemonHealthStore, type DemonStatus } from '@/stores/demonHealth';
 import { useConnectionStore } from '@/stores/connection';
-import type { DemonStatus } from '@/stores/demonHealth';
+import { LoadingSpinner, EmptyState } from '@/components/StateIndicators';
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -200,10 +200,13 @@ export function DemonHealth() {
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto p-4">
-        {demons.length === 0 ? (
-          <p className="text-sm text-zinc-500">
-            No demons configured. Add agents in the Agents view.
-          </p>
+        {!isMonitoring && demons.length === 0 ? (
+          <LoadingSpinner message="Starting health monitor..." />
+        ) : demons.length === 0 ? (
+          <EmptyState
+            message="No demons configured"
+            detail="Add agents in the Agents view to monitor their health here."
+          />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {demons.map((demon) => (

@@ -3,17 +3,18 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
-import { useAgentsStore } from '@/stores/agents';
+import { toast } from 'sonner';
+import { useAgentsStore, type Agent } from '@/stores/agents';
 import { useConnectionStore } from '@/stores/connection';
+import { useModelsStore } from '@/stores/models';
 import { useIsMobile } from '@/hooks/usePlatform';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 import { classifyModel, splitModelId, tierBadgeClasses } from '@/lib/modelTiers';
-import { DEMON_TEMPLATES } from '@/lib/demonTemplates';
-import type { DemonTemplate } from '@/lib/demonTemplates';
+import { DEMON_TEMPLATES, type DemonTemplate } from '@/lib/demonTemplates';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
-import type { Agent } from '@/stores/agents';
 
 // ---- Helper Functions -----------------------------------------------------
 
@@ -142,6 +143,8 @@ function CreateAgentModal() {
   const [name, setName] = useState('');
   const [workspace, setWorkspace] = useState('');
   const [emoji, setEmoji] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [workspaceError, setWorkspaceError] = useState('');
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -151,6 +154,8 @@ function CreateAgentModal() {
       setName('');
       setWorkspace('');
       setEmoji('');
+      setNameError('');
+      setWorkspaceError('');
     }
   }, [showCreateModal]);
 
@@ -169,8 +174,23 @@ function CreateAgentModal() {
   };
 
   const handleCreate = async () => {
-    if (!name || !workspace) return;
-    const success = await createAgent(name, workspace, emoji || undefined);
+    // Validate required fields
+    let valid = true;
+    if (!name.trim()) {
+      setNameError('Name is required');
+      valid = false;
+    } else {
+      setNameError('');
+    }
+    if (!workspace.trim()) {
+      setWorkspaceError('Workspace path is required');
+      valid = false;
+    } else {
+      setWorkspaceError('');
+    }
+    if (!valid) return;
+
+    const success = await createAgent(name.trim(), workspace.trim(), emoji || undefined);
     if (!success) return;
 
     // If a template was selected, write the soul file
@@ -186,6 +206,8 @@ function CreateAgentModal() {
             content: selectedTemplate.soulFile,
           });
         } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Failed to write soul file';
+          toast.error(msg);
           console.error('[Agents] Failed to write soul file from template:', err);
         }
       }, 500);
@@ -252,10 +274,14 @@ function CreateAgentModal() {
                   id="name"
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (nameError) setNameError('');
+                  }}
+                  className={`w-full rounded-md border bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:ring-1 focus:outline-none ${nameError ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30' : 'border-zinc-700 focus:border-amber-500 focus:ring-amber-500/30'}`}
                   placeholder="my-agent"
                 />
+                {nameError && <p className="mt-1 text-xs text-red-400">{nameError}</p>}
               </div>
 
               <div>
@@ -266,10 +292,14 @@ function CreateAgentModal() {
                   id="workspace"
                   type="text"
                   value={workspace}
-                  onChange={(e) => setWorkspace(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
+                  onChange={(e) => {
+                    setWorkspace(e.target.value);
+                    if (workspaceError) setWorkspaceError('');
+                  }}
+                  className={`w-full rounded-md border bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:ring-1 focus:outline-none ${workspaceError ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30' : 'border-zinc-700 focus:border-amber-500 focus:ring-amber-500/30'}`}
                   placeholder="/path/to/workspace"
                 />
+                {workspaceError && <p className="mt-1 text-xs text-red-400">{workspaceError}</p>}
               </div>
 
               <div>
@@ -335,20 +365,45 @@ function CreateAgentModal() {
 
 function EditAgentModal({ agent }: { agent: Agent | null }) {
   const { showEditModal, setShowEditModal, updateAgent } = useAgentsStore();
+  const { models, loadModels } = useModelsStore();
+  const { status } = useConnectionStore();
   const [name, setName] = useState('');
+  const [primaryModel, setPrimaryModel] = useState('');
+  const [nameError, setNameError] = useState('');
 
   useEffect(() => {
     if (agent) {
       setName(agent.name || '');
+      setPrimaryModel(agent.model?.primary || '');
+      setNameError('');
     }
   }, [agent]);
+
+  useEffect(() => {
+    if (showEditModal && status === 'connected' && models.length === 0) {
+      loadModels();
+    }
+  }, [showEditModal, status, models.length, loadModels]);
 
   if (!showEditModal || !agent) return null;
 
   const handleUpdate = async () => {
-    if (!name || !agent) return;
-    await updateAgent(agent.id, { name, identity: agent.identity });
+    if (!agent) return;
+    if (!name.trim()) {
+      setNameError('Name is required');
+      return;
+    }
+    setNameError('');
+    const updates: Partial<Agent> = { name: name.trim(), identity: agent.identity };
+    if (primaryModel) {
+      updates.model = {
+        primary: primaryModel,
+        fallbacks: agent.model?.fallbacks ?? [],
+      };
+    }
+    await updateAgent(agent.id, updates);
     setName('');
+    setPrimaryModel('');
   };
 
   return (
@@ -377,9 +432,32 @@ function EditAgentModal({ agent }: { agent: Agent | null }) {
               id="edit-name"
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
+              onChange={(e) => {
+                setName(e.target.value);
+                if (nameError) setNameError('');
+              }}
+              className={`w-full rounded-md border bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:ring-1 focus:outline-none ${nameError ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30' : 'border-zinc-700 focus:border-amber-500 focus:ring-amber-500/30'}`}
             />
+            {nameError && <p className="mt-1 text-xs text-red-400">{nameError}</p>}
+          </div>
+
+          <div>
+            <label htmlFor="edit-model" className="mb-1 block text-xs text-zinc-400">
+              Primary Model
+            </label>
+            <select
+              id="edit-model"
+              value={primaryModel}
+              onChange={(e) => setPrimaryModel(e.target.value)}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
+            >
+              <option value="">Unchanged</option>
+              {models.map((m) => (
+                <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+                  {m.name} ({m.provider})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -781,31 +859,31 @@ export function Agents() {
         )}
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex flex-1 overflow-hidden">
-        {isLoading ? (
-          <div className="flex w-full items-center justify-center text-sm text-zinc-400">
-            Loading agents...
-          </div>
+        {error && !isLoading ? (
+          <ErrorState message={error} onRetry={() => loadAgents(true)} />
+        ) : isLoading && agents.length === 0 ? (
+          <LoadingSpinner message="Loading agents..." />
         ) : isMobile ? (
           // Mobile: Tab-based layout
           <div className="flex-1 overflow-auto">
             {mobileTab === 'agents' && (
               <div className="space-y-2 p-3">
-                {agents.map((agent) => (
-                  <AgentListItem
-                    key={agent.id}
-                    agent={agent}
-                    isSelected={selectedAgentId === agent.id}
+                {agents.length === 0 ? (
+                  <EmptyState
+                    message="No agents configured"
+                    detail="Create your first agent to get started."
                   />
-                ))}
+                ) : (
+                  agents.map((agent) => (
+                    <AgentListItem
+                      key={agent.id}
+                      agent={agent}
+                      isSelected={selectedAgentId === agent.id}
+                    />
+                  ))
+                )}
               </div>
             )}
             {mobileTab === 'files' && <FileBrowser />}
@@ -816,15 +894,19 @@ export function Agents() {
           <>
             {/* Agent List */}
             <div className="w-64 overflow-auto border-r border-zinc-700">
-              <div className="space-y-2 p-3">
-                {agents.map((agent) => (
-                  <AgentListItem
-                    key={agent.id}
-                    agent={agent}
-                    isSelected={selectedAgentId === agent.id}
-                  />
-                ))}
-              </div>
+              {agents.length === 0 ? (
+                <EmptyState message="No agents" detail="Create your first agent." />
+              ) : (
+                <div className="space-y-2 p-3">
+                  {agents.map((agent) => (
+                    <AgentListItem
+                      key={agent.id}
+                      agent={agent}
+                      isSelected={selectedAgentId === agent.id}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* File Browser + Detail Panel */}

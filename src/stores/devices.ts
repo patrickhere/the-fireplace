@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Device Types ---------------------------------------------------------
@@ -95,6 +96,7 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load device requests';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Devices] Failed to load requests:', err);
     }
   },
@@ -106,10 +108,12 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
     try {
       set({ error: null });
       await request('device.pair.approve', { requestId });
+      toast.success('Device pairing approved');
       get().loadRequests();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to approve request';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Devices] Failed to approve:', err);
     }
   },
@@ -121,10 +125,12 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
     try {
       set({ error: null });
       await request('device.pair.reject', { requestId });
+      toast.success('Device pairing rejected');
       get().loadRequests();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to reject request';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Devices] Failed to reject:', err);
     }
   },
@@ -136,10 +142,12 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
     try {
       set({ error: null });
       await request('device.token.rotate', { deviceId, role, scopes });
+      toast.success('Token rotated');
       get().loadRequests();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to rotate token';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Devices] Failed to rotate token:', err);
     }
   },
@@ -151,10 +159,12 @@ export const useDevicesStore = create<DevicesState>((set, get) => ({
     try {
       set({ error: null });
       await request('device.token.revoke', { deviceId, role });
+      toast.success('Token revoked');
       get().loadRequests();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to revoke token';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Devices] Failed to revoke token:', err);
     }
   },

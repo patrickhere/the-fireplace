@@ -2,11 +2,11 @@
 // Demon Task Kanban View — Task Pipeline
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo } from 'react';
-import { useDemonTasksStore } from '@/stores/demonTasks';
+import { useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject } from 'react';
+import { useDemonTasksStore, type DemonTask } from '@/stores/demonTasks';
 import { useDemonHealthStore } from '@/stores/demonHealth';
 import { useConnectionStore } from '@/stores/connection';
-import type { DemonTask } from '@/stores/demonTasks';
+import { EmptyState } from '@/components/StateIndicators';
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -46,9 +46,88 @@ function shortModel(model: string): string {
     .replace('gpt-4o', 'gpt-4o');
 }
 
+// ---- FLIP Animation Hook --------------------------------------------------
+
+/**
+ * Returns a ref callback factory for task card elements.
+ * Implements FLIP (First, Last, Invert, Play) animation when tasks move
+ * between columns. Respects prefers-reduced-motion. Disabled during drag.
+ */
+function useFlipAnimation(
+  tasks: DemonTask[],
+  isDragging: MutableRefObject<boolean>
+): (id: string) => (el: HTMLDivElement | null) => void {
+  const prevRects = useRef<Map<string, DOMRect>>(new Map());
+  const elements = useRef<Map<string, HTMLDivElement>>(new Map());
+  const prevTaskIds = useRef<string[]>([]);
+
+  const prefersReducedMotion =
+    typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+
+  // First pass: snapshot positions BEFORE React commits new layout
+  useLayoutEffect(() => {
+    elements.current.forEach((el, id) => {
+      prevRects.current.set(id, el.getBoundingClientRect());
+    });
+  });
+
+  // Second pass: after React commits, measure new positions and animate
+  useLayoutEffect(() => {
+    if (prefersReducedMotion || isDragging.current) return;
+
+    const currentIds = tasks.map((t) => t.id);
+    const orderChanged =
+      currentIds.length !== prevTaskIds.current.length ||
+      currentIds.some((id, i) => id !== prevTaskIds.current[i]);
+
+    if (!orderChanged) return;
+    prevTaskIds.current = currentIds;
+
+    elements.current.forEach((el, id) => {
+      const prev = prevRects.current.get(id);
+      if (!prev) return;
+
+      const next = el.getBoundingClientRect();
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+
+      // Invert: jump to old position instantly
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+
+      // Play: animate to natural position on next frame
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 220ms ease-out';
+          el.style.transform = '';
+        });
+      });
+    });
+  });
+
+  return (id: string) => (el: HTMLDivElement | null) => {
+    if (el) {
+      elements.current.set(id, el);
+    } else {
+      elements.current.delete(id);
+      prevRects.current.delete(id);
+    }
+  };
+}
+
 // ---- Task Card Component --------------------------------------------------
 
-function TaskCard({ task }: { task: DemonTask }) {
+function TaskCard({
+  task,
+  cardRef,
+}: {
+  task: DemonTask;
+  cardRef?: (el: HTMLDivElement | null) => void;
+}) {
   const isFailed = task.status === 'failed';
   const isDoneOld =
     task.status === 'done' && task.completedAt && Date.now() - task.completedAt > 60 * 60 * 1000;
@@ -57,7 +136,10 @@ function TaskCard({ task }: { task: DemonTask }) {
   const opacityClass = isDoneOld ? 'opacity-50' : '';
 
   return (
-    <div className={`rounded-lg border bg-zinc-800 p-3 ${borderClass} ${opacityClass}`}>
+    <div
+      ref={cardRef}
+      className={`rounded-lg border bg-zinc-800 p-3 ${borderClass} ${opacityClass}`}
+    >
       {/* Description */}
       <p className="mb-2 line-clamp-2 text-sm text-zinc-200">{task.description}</p>
 
@@ -114,10 +196,12 @@ function KanbanColumn({
   title,
   count,
   tasks,
+  getCardRef,
 }: {
   title: string;
   count: number;
   tasks: DemonTask[];
+  getCardRef: (id: string) => (el: HTMLDivElement | null) => void;
 }) {
   return (
     <div className="flex min-w-[280px] flex-1 flex-col">
@@ -133,7 +217,7 @@ function KanbanColumn({
         {tasks.length === 0 ? (
           <p className="text-xs text-zinc-600">No tasks</p>
         ) : (
-          tasks.map((task) => <TaskCard key={task.id} task={task} />)
+          tasks.map((task) => <TaskCard key={task.id} task={task} cardRef={getCardRef(task.id)} />)
         )}
       </div>
     </div>
@@ -154,6 +238,9 @@ export function DemonKanban() {
   } = useDemonTasksStore();
   const { demons } = useDemonHealthStore();
   const { status } = useConnectionStore();
+
+  // Track drag state to disable FLIP during drag operations
+  const isDragging = useRef(false);
 
   // Start tracking on mount
   useEffect(() => {
@@ -186,6 +273,10 @@ export function DemonKanban() {
         .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0)),
     [filteredTasks]
   );
+
+  // FLIP animation — combine all tasks so the hook tracks order across columns
+  const allTasks = useMemo(() => [...queued, ...inProgress, ...done], [queued, inProgress, done]);
+  const getCardRef = useFlipAnimation(allTasks, isDragging);
 
   // Summary
   const summaryParts: string[] = [];
@@ -223,14 +314,25 @@ export function DemonKanban() {
       {/* Kanban columns */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
         {!isTracking && tasks.length === 0 ? (
-          <p className="text-sm text-zinc-500">
-            Waiting for demon task activity. Tasks appear when demons delegate work to each other.
-          </p>
+          <EmptyState
+            message="No task activity yet"
+            detail="Tasks appear here when demons delegate work to each other."
+          />
         ) : (
           <div className="flex h-full gap-4 md:flex-row">
-            <KanbanColumn title="QUEUED" count={queued.length} tasks={queued} />
-            <KanbanColumn title="IN PROGRESS" count={inProgress.length} tasks={inProgress} />
-            <KanbanColumn title="DONE" count={done.length} tasks={done} />
+            <KanbanColumn
+              title="QUEUED"
+              count={queued.length}
+              tasks={queued}
+              getCardRef={getCardRef}
+            />
+            <KanbanColumn
+              title="IN PROGRESS"
+              count={inProgress.length}
+              tasks={inProgress}
+              getCardRef={getCardRef}
+            />
+            <KanbanColumn title="DONE" count={done.length} tasks={done} getCardRef={getCardRef} />
           </div>
         )}
       </div>

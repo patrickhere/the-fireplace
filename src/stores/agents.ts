@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Agent Types ----------------------------------------------------------
@@ -50,6 +51,8 @@ export interface AgentEventPayload {
   fileName?: string;
 }
 
+const AGENTS_TTL_MS = 5 * 60_000; // 5 minutes
+
 // ---- Store Types ----------------------------------------------------------
 
 interface AgentsState {
@@ -59,6 +62,7 @@ interface AgentsState {
   agentFiles: AgentFile[];
   selectedFile: AgentFile | null;
   fileContent: string | null;
+  lastFetchedAt: number | null;
 
   // UI State
   isLoading: boolean;
@@ -72,7 +76,7 @@ interface AgentsState {
   eventUnsubscribe: Unsubscribe | null;
 
   // Actions
-  loadAgents: () => Promise<void>;
+  loadAgents: (forceRefresh?: boolean) => Promise<void>;
   selectAgent: (agentId: string) => void;
   createAgent: (name: string, workspace: string, emoji?: string) => Promise<boolean>;
   updateAgent: (agentId: string, updates: Partial<Agent>) => Promise<void>;
@@ -97,6 +101,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   agentFiles: [],
   selectedFile: null,
   fileContent: null,
+  lastFetchedAt: null,
   isLoading: false,
   isSavingFile: false,
   error: null,
@@ -105,7 +110,12 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   showDeleteModal: false,
   eventUnsubscribe: null,
 
-  loadAgents: async () => {
+  loadAgents: async (forceRefresh = false) => {
+    const { lastFetchedAt } = get();
+    if (!forceRefresh && lastFetchedAt !== null && Date.now() - lastFetchedAt < AGENTS_TTL_MS) {
+      return;
+    }
+
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
@@ -135,10 +145,12 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       set({
         agents,
         isLoading: false,
+        lastFetchedAt: Date.now(),
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load agents';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Agents] Failed to load agents:', err);
     }
   },
@@ -161,13 +173,15 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         emoji,
       });
 
+      toast.success('Agent created');
       // Reload agents
-      get().loadAgents();
+      get().loadAgents(true);
       set({ showCreateModal: false });
       return true;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create agent';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Agents] Failed to create agent:', err);
       return false;
     }
@@ -185,12 +199,14 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         ...updates,
       });
 
+      toast.success('Agent updated');
       // Reload agents
-      get().loadAgents();
+      get().loadAgents(true);
       set({ showEditModal: false });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update agent';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Agents] Failed to update agent:', err);
     }
   },
@@ -198,6 +214,17 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   deleteAgent: async (agentId: string, deleteFiles: boolean) => {
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
+
+    // Optimistic remove
+    const previous = get().agents;
+    set((state) => ({ agents: state.agents.filter((a) => a.id !== agentId) }));
+
+    // Clear selection if deleted agent was selected
+    if (get().selectedAgentId === agentId) {
+      set({ selectedAgentId: null, agentFiles: [], selectedFile: null, fileContent: null });
+    }
+
+    set({ showDeleteModal: false });
 
     try {
       set({ error: null });
@@ -207,17 +234,13 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         deleteFiles,
       });
 
-      // Clear selection if deleted agent was selected
-      if (get().selectedAgentId === agentId) {
-        set({ selectedAgentId: null, agentFiles: [], selectedFile: null, fileContent: null });
-      }
-
-      // Reload agents
-      get().loadAgents();
-      set({ showDeleteModal: false });
+      toast.success('Agent deleted');
     } catch (err) {
+      // Rollback on failure
+      set({ agents: previous });
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete agent';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Agents] Failed to delete agent:', err);
     }
   },
@@ -277,12 +300,14 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         content,
       });
 
+      toast.success('File saved');
       // Reload files to update metadata
       get().loadAgentFiles(agentId);
       set({ isSavingFile: false });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to save file';
       set({ error: errorMessage, isSavingFile: false });
+      toast.error(errorMessage);
       console.error('[Agents] Failed to save file:', err);
     }
   },
@@ -315,7 +340,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
         // Reload agents on any agent event
         if (['created', 'updated', 'deleted'].includes(payload.type)) {
-          get().loadAgents();
+          get().loadAgents(true);
         }
 
         // Reload files if file changed for selected agent
@@ -345,6 +370,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       agentFiles: [],
       selectedFile: null,
       fileContent: null,
+      lastFetchedAt: null,
       isLoading: false,
       isSavingFile: false,
       error: null,

@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
-import { useSessionsStore } from '@/stores/sessions';
+import { useSessionsStore, type SessionListItem, type SessionConfig } from '@/stores/sessions';
 import { useConnectionStore } from '@/stores/connection';
+import { useModelsStore } from '@/stores/models';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { SessionReplay } from '@/components/SessionReplay';
-import type { SessionListItem, SessionConfig } from '@/stores/sessions';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 
 // ---- Session Preview Modal ------------------------------------------------
 
@@ -65,6 +66,8 @@ function SessionPreviewModal() {
 
 function SessionConfigModal() {
   const { showConfigModal, setShowConfigModal, patchSession, sessions } = useSessionsStore();
+  const { models, loadModels } = useModelsStore();
+  const { status } = useConnectionStore();
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [config, setConfig] = useState<Partial<SessionConfig>>({});
 
@@ -73,6 +76,12 @@ function SessionConfigModal() {
       setSelectedKey(sessions[0]?.key || '');
     }
   }, [showConfigModal, sessions, selectedKey]);
+
+  useEffect(() => {
+    if (showConfigModal && status === 'connected' && models.length === 0) {
+      loadModels();
+    }
+  }, [showConfigModal, status, models.length, loadModels]);
 
   if (!showConfigModal) return null;
 
@@ -147,9 +156,11 @@ function SessionConfigModal() {
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
             >
               <option value="">Default</option>
-              <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-              <option value="claude-opus-4">Claude Opus 4</option>
-              <option value="claude-haiku-4">Claude Haiku 4</option>
+              {models.map((m) => (
+                <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+                  {m.name} ({m.provider})
+                </option>
+              ))}
             </select>
           </div>
 
@@ -651,46 +662,50 @@ export function Sessions() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="text-sm text-zinc-400">Loading sessions...</div>
+      <div className="flex-1 overflow-y-auto">
+        {error && !isLoading ? (
+          <ErrorState message={error} onRetry={loadSessions} />
+        ) : isLoading && sessions.length === 0 ? (
+          <LoadingSpinner message="Loading sessions..." />
         ) : filteredSessions.length === 0 ? (
-          <div className="text-sm text-zinc-400">
-            {searchQuery || activeFilter !== 'all'
-              ? 'No sessions match your filters.'
-              : 'No sessions yet. Start chatting to create your first session.'}
-          </div>
+          <EmptyState
+            message={
+              searchQuery || activeFilter !== 'all'
+                ? 'No sessions match your filters.'
+                : 'No sessions yet'
+            }
+            detail={
+              searchQuery || activeFilter !== 'all'
+                ? undefined
+                : 'Start chatting to create your first session.'
+            }
+          />
         ) : isMobile ? (
-          <div className="space-y-3">
+          <div className="space-y-3 p-4">
             {filteredSessions.map((session) => (
               <SessionCard key={session.key} session={session} onReplay={setReplaySessionKey} />
             ))}
           </div>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-zinc-700">
-                <th className="p-3 text-left text-xs font-semibold text-zinc-400">Name</th>
-                <th className="p-3 text-left text-xs font-semibold text-zinc-400">Model</th>
-                <th className="p-3 text-left text-xs font-semibold text-zinc-400">Messages</th>
-                <th className="p-3 text-left text-xs font-semibold text-zinc-400">Last Active</th>
-                <th className="p-3 text-left text-xs font-semibold text-zinc-400">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSessions.map((session) => (
-                <SessionRow key={session.key} session={session} onReplay={setReplaySessionKey} />
-              ))}
-            </tbody>
-          </table>
+          <div className="p-4">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-700">
+                  <th className="p-3 text-left text-xs font-semibold text-zinc-400">Name</th>
+                  <th className="p-3 text-left text-xs font-semibold text-zinc-400">Model</th>
+                  <th className="p-3 text-left text-xs font-semibold text-zinc-400">Messages</th>
+                  <th className="p-3 text-left text-xs font-semibold text-zinc-400">Last Active</th>
+                  <th className="p-3 text-left text-xs font-semibold text-zinc-400">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSessions.map((session) => (
+                  <SessionRow key={session.key} session={session} onReplay={setReplaySessionKey} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

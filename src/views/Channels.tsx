@@ -3,10 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
-import { useChannelsStore } from '@/stores/channels';
+import { useChannelsStore, type ChannelAccount } from '@/stores/channels';
 import { useConnectionStore } from '@/stores/connection';
 import { useIsMobile } from '@/hooks/usePlatform';
-import type { ChannelAccount } from '@/stores/channels';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 
 // ---- Status Dot Component -------------------------------------------------
 
@@ -198,21 +198,19 @@ export function Channels() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && !channelStatus ? (
-          <div className="text-sm text-zinc-400">Loading channel status...</div>
+        {error && !isLoading ? (
+          <ErrorState message={error} onRetry={loadStatus} />
+        ) : isLoading && !channelStatus ? (
+          <LoadingSpinner message="Loading channel status..." />
         ) : !channelStatus ? (
-          <div className="text-sm text-zinc-400">
-            No channel status available. Click "Refresh" to load.
-          </div>
+          <EmptyState
+            message="No channel status available"
+            detail='Click "Refresh" to load.'
+            action="Refresh"
+            onAction={loadStatus}
+          />
         ) : (
           <div className={`grid gap-4 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
             {channelStatus.channelOrder.map((channelId) => {

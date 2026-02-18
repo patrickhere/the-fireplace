@@ -3,12 +3,15 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useConfigStore } from '@/stores/config';
+import {
+  useConfigStore,
+  type UiHint,
+  type ParsedProvider,
+  type EndpointTestResult,
+} from '@/stores/config';
 import { useConnectionStore } from '@/stores/connection';
-import { useAgentsStore } from '@/stores/agents';
+import { useAgentsStore, type Agent } from '@/stores/agents';
 import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
-import type { UiHint, ParsedProvider, EndpointTestResult } from '@/stores/config';
-import type { Agent } from '@/stores/agents';
 
 // ---- Confirmation Dialog --------------------------------------------------
 
@@ -410,6 +413,7 @@ export function Config() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showProviders, setShowProviders] = useState(true);
   const [showRouting, setShowRouting] = useState(true);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Load config on mount
   useEffect(() => {
@@ -432,13 +436,23 @@ export function Config() {
     (value: string) => {
       setEditorValue(value);
       setHasUnsavedChanges(value !== rawConfig);
+      if (jsonError) setJsonError(null);
     },
-    [rawConfig]
+    [rawConfig, jsonError]
   );
 
   const handleSaveClick = useCallback(() => {
+    // Validate JSON before showing confirmation
+    try {
+      JSON.parse(editorValue);
+      setJsonError(null);
+    } catch (err) {
+      const msg = err instanceof SyntaxError ? err.message : 'Invalid JSON';
+      setJsonError(`JSON parse error: ${msg}`);
+      return;
+    }
     setShowConfirm(true);
-  }, []);
+  }, [editorValue]);
 
   const handleConfirmSave = useCallback(async () => {
     setShowConfirm(false);
@@ -498,7 +512,7 @@ export function Config() {
           )}
 
           <button
-            onClick={() => loadConfig()}
+            onClick={() => loadConfig(true)}
             disabled={isLoading}
             className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
             type="button"
@@ -521,6 +535,13 @@ export function Config() {
       {hasUnsavedChanges && (
         <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5">
           <p className="text-xs text-amber-400">You have unsaved changes.</p>
+        </div>
+      )}
+
+      {/* JSON Validation Error Banner */}
+      {jsonError && (
+        <div className="border-b border-red-500/30 bg-red-500/10 px-3 py-2">
+          <p className="font-mono text-xs text-red-400">{jsonError}</p>
         </div>
       )}
 

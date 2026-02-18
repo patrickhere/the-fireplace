@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
+import type { Unsubscribe } from '@/gateway/types';
 
 // ---- Types ----------------------------------------------------------------
 
@@ -84,6 +86,26 @@ export interface CronAddParams {
   payload: CronPayload;
 }
 
+// ---- Cron Event Payload ---------------------------------------------------
+
+/**
+ * Payload shape for the `cron` gateway event.
+ * The event fires when a job starts, completes, or fails.
+ * All fields except `jobId` are optional — validate before use.
+ */
+interface CronEventPayload {
+  jobId?: string;
+  status?: string;
+  error?: string;
+  startedAtMs?: number;
+  finishedAtMs?: number;
+  durationMs?: number;
+  runningAtMs?: number;
+  nextRunAtMs?: number;
+  lastRunAtMs?: number;
+  consecutiveErrors?: number;
+}
+
 // ---- Store Types ----------------------------------------------------------
 
 interface CronState {
@@ -95,6 +117,9 @@ interface CronState {
   isLoading: boolean;
   error: string | null;
 
+  // Event subscription
+  _eventUnsubscribe: Unsubscribe | null;
+
   // Actions
   loadJobs: () => Promise<void>;
   addJob: (params: CronAddParams) => Promise<void>;
@@ -102,6 +127,8 @@ interface CronState {
   removeJob: (id: string) => Promise<void>;
   triggerJob: (id: string) => Promise<void>;
   loadRuns: (id: string) => Promise<void>;
+  subscribeToEvents: () => void;
+  unsubscribeFromEvents: () => void;
   reset: () => void;
 }
 
@@ -113,6 +140,7 @@ export const useCronStore = create<CronState>((set, get) => ({
   runHistory: {},
   isLoading: false,
   error: null,
+  _eventUnsubscribe: null,
 
   loadJobs: async () => {
     const { useConnectionStore } = await import('./connection');
@@ -130,6 +158,7 @@ export const useCronStore = create<CronState>((set, get) => ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load cron jobs';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Cron] Failed to load jobs:', err);
     }
   },
@@ -143,11 +172,13 @@ export const useCronStore = create<CronState>((set, get) => ({
 
       await request('cron.add', params);
 
+      toast.success('Cron job created');
       // Reload jobs list
       get().loadJobs();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to add cron job';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Cron] Failed to add job:', err);
     }
   },
@@ -161,11 +192,13 @@ export const useCronStore = create<CronState>((set, get) => ({
 
       await request('cron.update', { id, ...patch });
 
+      toast.success('Cron job updated');
       // Reload jobs list
       get().loadJobs();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update cron job';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Cron] Failed to update job:', err);
     }
   },
@@ -174,18 +207,22 @@ export const useCronStore = create<CronState>((set, get) => ({
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
+    // Optimistic remove
+    const previous = get().jobs;
+    set((state) => ({ jobs: state.jobs.filter((j) => j.id !== id) }));
+
     try {
       set({ error: null });
 
       await request('cron.remove', { id });
 
-      // Remove from local state immediately
-      set((state) => ({
-        jobs: state.jobs.filter((j) => j.id !== id),
-      }));
+      toast.success('Cron job deleted');
     } catch (err) {
+      // Rollback on failure
+      set({ jobs: previous });
       const errorMessage = err instanceof Error ? err.message : 'Failed to remove cron job';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Cron] Failed to remove job:', err);
     }
   },
@@ -199,11 +236,13 @@ export const useCronStore = create<CronState>((set, get) => ({
 
       await request('cron.run', { id });
 
+      toast.success('Cron job triggered');
       // Reload jobs to get updated state
       get().loadJobs();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to trigger cron job';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Cron] Failed to trigger job:', err);
     }
   },
@@ -223,16 +262,83 @@ export const useCronStore = create<CronState>((set, get) => ({
         },
       }));
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to load run history';
+      toast.error(errMsg);
       console.error('[Cron] Failed to load runs for job', id, ':', err);
     }
   },
 
+  subscribeToEvents: () => {
+    const { _eventUnsubscribe } = get();
+    if (_eventUnsubscribe) {
+      _eventUnsubscribe();
+    }
+
+    (async () => {
+      const { useConnectionStore } = await import('./connection');
+      const { subscribe } = useConnectionStore.getState();
+
+      const unsub = subscribe<CronEventPayload>('cron', (payload) => {
+        // Validate payload has the minimum required field
+        if (typeof payload !== 'object' || payload === null || typeof payload.jobId !== 'string') {
+          console.warn('[Cron] Received malformed cron event, ignoring:', payload);
+          return;
+        }
+
+        const {
+          jobId,
+          status,
+          error,
+          startedAtMs,
+          finishedAtMs,
+          durationMs,
+          runningAtMs,
+          nextRunAtMs,
+          lastRunAtMs,
+          consecutiveErrors,
+        } = payload;
+
+        set((state) => ({
+          jobs: state.jobs.map((job) => {
+            if (job.id !== jobId) return job;
+            const stateUpdate: Partial<CronJobState> = {};
+            if (status !== undefined) stateUpdate.lastStatus = status;
+            if (error !== undefined) stateUpdate.lastError = error;
+            if (startedAtMs !== undefined || runningAtMs !== undefined)
+              stateUpdate.runningAtMs = runningAtMs ?? startedAtMs;
+            if (finishedAtMs !== undefined || lastRunAtMs !== undefined)
+              stateUpdate.lastRunAtMs = lastRunAtMs ?? finishedAtMs;
+            if (durationMs !== undefined) stateUpdate.lastDurationMs = durationMs;
+            if (nextRunAtMs !== undefined) stateUpdate.nextRunAtMs = nextRunAtMs;
+            if (consecutiveErrors !== undefined) stateUpdate.consecutiveErrors = consecutiveErrors;
+            // Clear runningAtMs once finished
+            if (finishedAtMs !== undefined || lastRunAtMs !== undefined)
+              stateUpdate.runningAtMs = undefined;
+            return { ...job, state: { ...job.state, ...stateUpdate } };
+          }),
+        }));
+      });
+
+      set({ _eventUnsubscribe: unsub });
+    })();
+  },
+
+  unsubscribeFromEvents: () => {
+    const { _eventUnsubscribe } = get();
+    if (_eventUnsubscribe) {
+      _eventUnsubscribe();
+      set({ _eventUnsubscribe: null });
+    }
+  },
+
   reset: () => {
+    get().unsubscribeFromEvents();
     set({
       jobs: [],
       runHistory: {},
       isLoading: false,
       error: null,
+      _eventUnsubscribe: null,
     });
   },
 }));

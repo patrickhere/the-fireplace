@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 
 // ---- Model Types ----------------------------------------------------------
 
@@ -16,17 +17,20 @@ export interface ModelChoice {
 
 // ---- Store Types ----------------------------------------------------------
 
+const MODELS_TTL_MS = 5 * 60_000; // 5 minutes
+
 interface ModelsState {
   // Data
   models: ModelChoice[];
   currentModelId: string | null;
+  lastFetchedAt: number | null;
 
   // UI State
   isLoading: boolean;
   error: string | null;
 
   // Actions
-  loadModels: () => Promise<void>;
+  loadModels: (forceRefresh?: boolean) => Promise<void>;
   setModel: (modelId: string) => Promise<void>;
   reset: () => void;
 }
@@ -36,10 +40,16 @@ interface ModelsState {
 export const useModelsStore = create<ModelsState>((set, get) => ({
   models: [],
   currentModelId: null,
+  lastFetchedAt: null,
   isLoading: false,
   error: null,
 
-  loadModels: async () => {
+  loadModels: async (forceRefresh = false) => {
+    const { lastFetchedAt } = get();
+    if (!forceRefresh && lastFetchedAt !== null && Date.now() - lastFetchedAt < MODELS_TTL_MS) {
+      return;
+    }
+
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
@@ -55,10 +65,12 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
         models: response.models ?? [],
         currentModelId: response.current ?? null,
         isLoading: false,
+        lastFetchedAt: Date.now(),
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load models';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Models] Failed to load:', err);
     }
   },
@@ -70,20 +82,23 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     try {
       set({ error: null });
 
-      const mainSessionKey = snapshot?.sessionDefaults?.mainKey ?? 'main';
+      const mainSessionKey = snapshot?.sessionDefaults?.mainSessionKey ?? 'main';
       await request('sessions.patch', {
         key: mainSessionKey,
         model: modelId,
       });
 
       set({ currentModelId: modelId });
+      toast.success('Default model updated');
 
       // Reload models to get fresh state
-      get().loadModels();
+      get().loadModels(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to set model';
       set({ error: errorMessage });
+      toast.error(errorMessage);
       console.error('[Models] Failed to set model:', err);
+      throw err;
     }
   },
 
@@ -91,6 +106,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     set({
       models: [],
       currentModelId: null,
+      lastFetchedAt: null,
       isLoading: false,
       error: null,
     });

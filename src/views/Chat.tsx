@@ -3,10 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, type Attachment, type SessionConfig, type Message } from '@/stores/chat';
 import { useConnectionStore } from '@/stores/connection';
+import { useModelsStore } from '@/stores/models';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
-import type { Attachment, SessionConfig, Message } from '@/stores/chat';
 
 // ---- Session Selector Component -------------------------------------------
 
@@ -84,6 +84,7 @@ function SessionSelector() {
 
 function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { sessionConfig, updateSessionConfig } = useChatStore();
+  const { models } = useModelsStore();
 
   if (!isOpen) return null;
 
@@ -109,14 +110,16 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
           </label>
           <select
             id="model"
-            value={sessionConfig.model || 'claude-sonnet-4-5'}
-            onChange={(e) => updateSessionConfig({ model: e.target.value })}
+            value={sessionConfig.model || ''}
+            onChange={(e) => updateSessionConfig({ model: e.target.value || undefined })}
             className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 focus:outline-none"
           >
-            <option value="claude-opus-4-6">Claude Opus 4.6</option>
-            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-            <option value="claude-opus-4">Claude Opus 4</option>
-            <option value="claude-haiku-4">Claude Haiku 4</option>
+            <option value="">Default</option>
+            {models.map((m) => (
+              <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+                {m.name}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -182,6 +185,94 @@ function SessionConfigPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () 
   );
 }
 
+// ---- Tool Use Block -------------------------------------------------------
+
+function ToolUseBlock({ name, input }: { name?: string; input?: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const label = name || 'tool';
+  const json = input !== undefined ? JSON.stringify(input, null, 2) : '';
+
+  return (
+    <div className="my-1 rounded-md border border-zinc-700 bg-zinc-950 text-xs">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-amber-400 hover:bg-zinc-900"
+      >
+        <span>{expanded ? '▾' : '▸'}</span>
+        <span className="font-mono font-medium">{label}</span>
+        <span className="text-zinc-500">(tool_use)</span>
+      </button>
+      {expanded && json && (
+        <pre className="overflow-x-auto border-t border-zinc-800 px-2 py-1.5 text-zinc-300">
+          {json}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ---- Tool Result Block ----------------------------------------------------
+
+function ToolResultBlock({ output, isError }: { output?: unknown; isError?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const text =
+    typeof output === 'string'
+      ? output
+      : output !== undefined
+        ? JSON.stringify(output, null, 2)
+        : '';
+
+  return (
+    <div
+      className={`my-1 rounded-md border text-xs ${isError ? 'border-red-700 bg-red-950/30' : 'border-zinc-700 bg-zinc-950'}`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-900"
+      >
+        <span>{expanded ? '▾' : '▸'}</span>
+        <span className={`font-mono font-medium ${isError ? 'text-red-400' : 'text-zinc-300'}`}>
+          {isError ? 'error' : 'result'}
+        </span>
+        <span className="text-zinc-500">(tool_result)</span>
+      </button>
+      {expanded && text && (
+        <pre
+          className={`overflow-x-auto border-t px-2 py-1.5 ${isError ? 'border-red-800 text-red-300' : 'border-zinc-800 text-zinc-300'}`}
+        >
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ---- Thinking Block -------------------------------------------------------
+
+function ThinkingBlock({ text }: { text?: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!text) return null;
+
+  return (
+    <div className="my-1 rounded-md border border-zinc-800 bg-zinc-950/50 text-xs">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-zinc-500 hover:bg-zinc-900 hover:text-zinc-400"
+      >
+        <span>{expanded ? '▾' : '▸'}</span>
+        <span className="italic">thinking…</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-zinc-800 px-2 py-1.5 text-zinc-500 italic">{text}</div>
+      )}
+    </div>
+  );
+}
+
 // ---- Message Bubble -------------------------------------------------------
 
 function MessageBubble({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
@@ -189,15 +280,16 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
   const isSystem = message.role === 'system';
   const isInjected = message.metadata?.injected === true;
 
-  // Combine text content
-  const textContent = message.content
-    .filter((c) => c.type === 'text')
-    .map((c) => c.text)
-    .join('\n');
-
-  // Get images and files
+  // Partition content blocks by type
+  const textBlocks = message.content.filter((c) => c.type === 'text');
   const images = message.content.filter((c) => c.type === 'image');
   const files = message.content.filter((c) => c.type === 'file');
+  const toolUseBlocks = message.content.filter((c) => c.type === 'tool_use');
+  const toolResultBlocks = message.content.filter((c) => c.type === 'tool_result');
+  const thinkingBlocks = message.content.filter((c) => c.type === 'thinking');
+
+  // Combine text content for markdown rendering
+  const textContent = textBlocks.map((c) => c.text).join('\n');
 
   return (
     <div
@@ -220,6 +312,11 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
           <span>{new Date(message.timestamp).toLocaleTimeString()}</span>
           {message.model && <span className="text-zinc-600">({message.model})</span>}
         </div>
+
+        {/* Thinking blocks (shown before main content) */}
+        {thinkingBlocks.map((block, idx) => (
+          <ThinkingBlock key={idx} text={block.text} />
+        ))}
 
         {/* Images */}
         {images.length > 0 && (
@@ -249,6 +346,16 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
             ))}
           </div>
         )}
+
+        {/* Tool use blocks */}
+        {toolUseBlocks.map((block, idx) => (
+          <ToolUseBlock key={idx} name={block.toolName} input={block.input} />
+        ))}
+
+        {/* Tool result blocks */}
+        {toolResultBlocks.map((block, idx) => (
+          <ToolResultBlock key={idx} output={block.output} isError={block.isError} />
+        ))}
 
         {/* Text content */}
         {textContent && (

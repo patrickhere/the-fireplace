@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState, useCallback } from 'react';
-import { useDevicesStore } from '@/stores/devices';
+import { useDevicesStore, type DevicePairRequest, type PairedDevice } from '@/stores/devices';
 import { useConnectionStore } from '@/stores/connection';
-import type { DevicePairRequest, PairedDevice } from '@/stores/devices';
+import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
 
 // ---- Confirmation Dialog --------------------------------------------------
 
@@ -278,17 +278,12 @@ export function Devices() {
         </div>
       </div>
 
-      {/* Error Banner */}
-      {error && (
-        <div className="border-b border-red-500/20 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isLoading && pairingRequests.length === 0 && pairedDevices.length === 0 ? (
-          <div className="text-sm text-zinc-400">Loading devices...</div>
+        {error && pairingRequests.length === 0 && pairedDevices.length === 0 ? (
+          <ErrorState message={error} onRetry={load} />
+        ) : isLoading && pairingRequests.length === 0 && pairedDevices.length === 0 ? (
+          <LoadingSpinner message="Loading devices..." />
         ) : (
           <div className="space-y-6">
             {/* Pairing Requests Section */}
@@ -303,9 +298,10 @@ export function Devices() {
               </h2>
 
               {pairingRequests.length === 0 ? (
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 text-sm text-zinc-500">
-                  No pending pairing requests
-                </div>
+                <EmptyState
+                  message="No pending pairing requests"
+                  detail="New device pairing requests will appear here."
+                />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
                   {pairingRequests.map((req) => (
@@ -322,9 +318,10 @@ export function Devices() {
               </h2>
 
               {pairedDevices.length === 0 ? (
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-4 text-sm text-zinc-500">
-                  No paired devices
-                </div>
+                <EmptyState
+                  message="No paired devices"
+                  detail="Approve a pairing request to add a device."
+                />
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900">
                   <table className="w-full text-left">

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { toast } from 'sonner';
 
 // ---- Types ----------------------------------------------------------------
 
@@ -49,6 +50,8 @@ export interface EndpointTestResult {
   message?: string;
 }
 
+const CONFIG_TTL_MS = 2 * 60_000; // 2 minutes
+
 // ---- Store Types ----------------------------------------------------------
 
 interface ConfigState {
@@ -58,6 +61,7 @@ interface ConfigState {
   schema: unknown | null;
   uiHints: Record<string, UiHint>;
   endpointResults: Map<string, EndpointTestResult>;
+  lastFetchedAt: number | null;
 
   // UI State
   isLoading: boolean;
@@ -68,7 +72,7 @@ interface ConfigState {
   parsedProviders: () => ParsedProvider[];
 
   // Actions
-  loadConfig: () => Promise<void>;
+  loadConfig: (forceRefresh?: boolean) => Promise<void>;
   loadSchema: () => Promise<void>;
   saveConfig: (raw: string) => Promise<void>;
   patchConfig: (raw: string) => Promise<void>;
@@ -85,6 +89,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   schema: null,
   uiHints: {},
   endpointResults: new Map(),
+  lastFetchedAt: null,
   isLoading: false,
   isSaving: false,
   error: null,
@@ -114,7 +119,12 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     }
   },
 
-  loadConfig: async () => {
+  loadConfig: async (forceRefresh = false) => {
+    const { lastFetchedAt } = get();
+    if (!forceRefresh && lastFetchedAt !== null && Date.now() - lastFetchedAt < CONFIG_TTL_MS) {
+      return;
+    }
+
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
@@ -127,10 +137,12 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         rawConfig: response.raw,
         configHash: response.hash,
         isLoading: false,
+        lastFetchedAt: Date.now(),
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load config';
       set({ error: errorMessage, isLoading: false });
+      toast.error(errorMessage);
       console.error('[Config] Failed to load config:', err);
     }
   },
@@ -170,12 +182,14 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
           configHash: response.hash,
           isSaving: false,
         });
+        toast.success('Config saved');
       } else {
         set({ isSaving: false });
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to save config';
       set({ error: errorMessage, isSaving: false });
+      toast.error(errorMessage);
       console.error('[Config] Failed to save config:', err);
     }
   },
@@ -194,12 +208,14 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       });
 
       set({ isSaving: false });
+      toast.success('Config patched');
 
       // Reload config to get updated state
-      get().loadConfig();
+      get().loadConfig(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to patch config';
       set({ error: errorMessage, isSaving: false });
+      toast.error(errorMessage);
       console.error('[Config] Failed to patch config:', err);
     }
   },
@@ -252,6 +268,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       schema: null,
       uiHints: {},
       endpointResults: new Map(),
+      lastFetchedAt: null,
       isLoading: false,
       isSaving: false,
       error: null,

@@ -118,7 +118,10 @@ export const useDemonTasksStore = create<DemonTasksState>((set, get) => ({
                   ...t,
                   status: 'failed' as const,
                   completedAt: Date.now(),
-                  error: payload.error?.message ?? 'Unknown error',
+                  error:
+                    typeof payload.error === 'string'
+                      ? payload.error
+                      : (payload.error?.message ?? 'Unknown error'),
                 };
               }
               return t;

@@ -31,6 +31,7 @@ interface DemonChatState {
   // Internal
   _unsubscribe: Unsubscribe | null;
   _connUnsub: Unsubscribe | null;
+  _agentsUnsub: Unsubscribe | null;
   _cronPoll: ReturnType<typeof setInterval> | null;
 
   // Actions
@@ -84,8 +85,13 @@ function matchAgentFromSessionKey(sessionKey: string, agents: Agent[]): Agent | 
     if (byCanonicalId) return byCanonicalId;
   }
 
-  // Generic token match
-  let match = agents.find((a) => sessionKey.includes(`:${a.id}:`) || sessionKey.startsWith(a.id));
+  // Generic token match — also check "agent:<agentId>" prefix (BUG FIX #6 related)
+  let match = agents.find(
+    (a) =>
+      sessionKey.includes(`:${a.id}:`) ||
+      sessionKey.startsWith(`agent:${a.id}`) ||
+      sessionKey.startsWith(a.id)
+  );
   if (match) return match;
 
   // Fallback: check if any agent name appears in session key
@@ -131,40 +137,84 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
   isListening: false,
   _unsubscribe: null,
   _connUnsub: null,
+  _agentsUnsub: null,
   _cronPoll: null,
 
   startListening: () => {
     const { isListening } = get();
 
-    // Optimistic lock to prevent concurrent startListening calls
+    // Guard against concurrent startListening calls
     if (isListening) return;
 
-    // Clean up any stale subscriptions from a prior failed start
-    const { _unsubscribe, _connUnsub, _cronPoll } = get();
+    // BUG FIX #4: Call previous _connUnsub() before creating a new one to
+    // prevent leaking connection watchers on every disconnect/reconnect cycle.
+    const { _unsubscribe, _connUnsub, _agentsUnsub, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
     if (_connUnsub) _connUnsub();
+    if (_agentsUnsub) _agentsUnsub();
     if (_cronPoll) clearInterval(_cronPoll);
 
-    set({ isListening: true, _unsubscribe: null, _connUnsub: null, _cronPoll: null });
+    // BUG FIX #3: Do NOT set isListening: true here. Only set it after the
+    // subscription is confirmed live. Premature isListening prevents retry
+    // if the initial subscription fails.
+    set({ _unsubscribe: null, _connUnsub: null, _agentsUnsub: null, _cronPoll: null });
 
     (async () => {
       try {
         const { useConnectionStore } = await import('./connection');
         const { useAgentsStore } = await import('./agents');
-        const { subscribe } = useConnectionStore.getState();
+
+        // BUG FIX #2: If the gateway client is not yet connected, subscribe() returns
+        // NOOP_UNSUBSCRIBE — a silent no-op that drops all events. Instead, watch for
+        // the connection to become available and call startListening() from there.
+        // Do NOT set isListening: true until a real subscription is established.
+        const connectionState = useConnectionStore.getState();
+        if (connectionState.status !== 'connected') {
+          const pendingConnUnsub = useConnectionStore.subscribe((state) => {
+            if (state.status === 'connected') {
+              // Remove this watcher first so startListening sees a clean slate.
+              const stored = get()._connUnsub;
+              if (stored === pendingConnUnsub) {
+                set({ _connUnsub: null });
+              }
+              pendingConnUnsub();
+              get().startListening();
+            }
+          });
+          set({ _connUnsub: pendingConnUnsub });
+          return;
+        }
+
+        const { subscribe } = connectionState;
 
         const pullCronPulseSummaries = async (): Promise<void> => {
           try {
             const { request } = useConnectionStore.getState();
             const jobsRes = await request<{
-              jobs?: Array<{ id: string; name?: string; agentId?: string; payload?: { kind?: string } }>;
+              jobs?: Array<{
+                id: string;
+                name?: string;
+                agentId?: string;
+                tags?: string[];
+                payload?: { kind?: string };
+              }>;
             }>('cron.list', { includeDisabled: true });
             const jobs = jobsRes.jobs ?? [];
-            const pulseJobs = jobs.filter(
-              (j) =>
-                (j.name ?? '').toLowerCase().includes('demon pulse') &&
-                (j.payload?.kind === 'agentTurn' || !j.payload?.kind)
-            );
+
+            // BUG FIX #7: Identify demon pulse jobs robustly — don't rely on the
+            // exact "demon pulse" name string. Prefer tag-based matching, then
+            // agentId+kind, then a broad name heuristic as last resort.
+            const pulseJobs = jobs.filter((j) => {
+              const tags = j.tags ?? [];
+              if (tags.some((t) => t === 'demon-pulse' || t === 'demon_pulse' || t === 'pulse')) {
+                return true;
+              }
+              if (j.payload?.kind === 'agentTurn' && Boolean(j.agentId)) {
+                return true;
+              }
+              const name = (j.name ?? '').toLowerCase();
+              return name.includes('pulse') || name.includes('demon');
+            });
             if (pulseJobs.length === 0) return;
 
             for (const job of pulseJobs) {
@@ -193,7 +243,9 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
 
               for (const entry of entries) {
                 const idSource =
-                  entry.sessionId ?? entry.sessionKey ?? `${entry.jobId}:${entry.runAtMs ?? entry.ts ?? 0}`;
+                  entry.sessionId ??
+                  entry.sessionKey ??
+                  `${entry.jobId}:${entry.runAtMs ?? entry.ts ?? 0}`;
                 const msgId = `cron_${idSource}`;
 
                 set((state) => {
@@ -236,7 +288,12 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
         // In practice, demon sessions process one message at a time, so this is safe.
         const activeAnonKeys = new Map<string, string>(); // sessionKey → bufferKey
 
-        const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
+        // BUG FIX #1: Buffer events that arrive before the agents list is loaded.
+        // Events are held in pendingEventQueue and replayed once agents become available.
+        const pendingEventQueue: ChatEventPayload[] = [];
+        let agentsReady = useAgentsStore.getState().agents.length > 0;
+
+        const processEvent = (payload: ChatEventPayload): void => {
           // ChatEventPayload may be either:
           // - delta/done/error shape
           // - state/message/errorMessage shape
@@ -389,6 +446,31 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
             }
             return { messages: newMessages };
           });
+        };
+
+        // Subscribe to chat events. This is now guaranteed to be a real subscription
+        // (not NOOP) because we verified status === 'connected' above.
+        const unsub = subscribe<ChatEventPayload>('chat', (payload) => {
+          if (!agentsReady) {
+            // Agents haven't loaded yet — buffer this event for replay (BUG FIX #1)
+            pendingEventQueue.push(payload);
+            return;
+          }
+          processEvent(payload);
+        });
+
+        // BUG FIX #1 (continued): Watch agents store. Once agents load, replay queue.
+        // This watcher self-terminates after agents are loaded.
+        const agentsUnsub = useAgentsStore.subscribe((agentsState) => {
+          if (!agentsReady && agentsState.agents.length > 0) {
+            agentsReady = true;
+            const queued = pendingEventQueue.splice(0);
+            for (const payload of queued) {
+              processEvent(payload);
+            }
+            set({ _agentsUnsub: null });
+            agentsUnsub();
+          }
         });
 
         // Watch for connection lifecycle to auto-stop/restart
@@ -414,38 +496,54 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
           void pullCronPulseSummaries();
         }, 10_000);
 
-        // Only mark as listening if we got a real subscription (not noop)
-        const { status } = useConnectionStore.getState();
+        // BUG FIX #2 + #3: Set isListening: true only now — after the subscription
+        // is confirmed live (we verified status === 'connected' before subscribing).
+        // This is the single authoritative place where isListening becomes true.
         set({
           _unsubscribe: unsub,
           _connUnsub: connUnsub,
+          _agentsUnsub: agentsUnsub,
           _cronPoll: cronPoll,
-          isListening: status === 'connected',
+          isListening: true,
         });
       } catch (error) {
         console.error('[DemonChat] Failed to start listening:', error);
-        set({ isListening: false, _unsubscribe: null, _connUnsub: null, _cronPoll: null });
+        set({
+          isListening: false,
+          _unsubscribe: null,
+          _connUnsub: null,
+          _agentsUnsub: null,
+          _cronPoll: null,
+        });
       }
     })();
   },
 
   stopListening: () => {
-    const { _unsubscribe, _cronPoll } = get();
+    const { _unsubscribe, _agentsUnsub, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
+    if (_agentsUnsub) _agentsUnsub();
     if (_cronPoll) clearInterval(_cronPoll);
     // Note: _connUnsub is intentionally preserved so the connection watcher
     // can trigger auto-restart on reconnect. It is only cleared when the
     // view explicitly tears down via the cleanup in startListening or
     // when a new startListening call replaces it.
-    set({ _unsubscribe: null, _cronPoll: null, isListening: false });
+    set({ _unsubscribe: null, _agentsUnsub: null, _cronPoll: null, isListening: false });
   },
 
   teardown: () => {
-    const { _unsubscribe, _connUnsub, _cronPoll } = get();
+    const { _unsubscribe, _connUnsub, _agentsUnsub, _cronPoll } = get();
     if (_unsubscribe) _unsubscribe();
     if (_connUnsub) _connUnsub();
+    if (_agentsUnsub) _agentsUnsub();
     if (_cronPoll) clearInterval(_cronPoll);
-    set({ _unsubscribe: null, _connUnsub: null, _cronPoll: null, isListening: false });
+    set({
+      _unsubscribe: null,
+      _connUnsub: null,
+      _agentsUnsub: null,
+      _cronPoll: null,
+      isListening: false,
+    });
   },
 
   toggleDemonFilter: (demonId: string) => {
@@ -473,8 +571,10 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       includeUnknown: true,
     });
 
+    // BUG FIX #6: Session keys use "agent:<agentId>" prefix, not bare demonId.
+    // Match against s.agentId (if gateway provides it) or the canonical prefix.
     const demonSession = sessionsResult.sessions.find(
-      (s) => s.agentId === demonId || s.key.startsWith(demonId)
+      (s) => s.agentId === demonId || s.key.startsWith(`agent:${demonId}`)
     );
 
     if (!demonSession) {
@@ -482,9 +582,11 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       return;
     }
 
-    await request('chat.send', {
+    // BUG FIX #5: Use chat.inject (not chat.send) to inject an operator message
+    // into a demon's session without triggering a normal user turn.
+    await request('chat.inject', {
       sessionKey: demonSession.key,
-      message,
+      content: [{ type: 'text', text: message }],
       idempotencyKey: crypto.randomUUID(),
     });
   },
