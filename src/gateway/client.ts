@@ -1071,6 +1071,7 @@ export class GatewayClient {
 
   private handleClose(_event: CloseEvent): void {
     this.ws = null;
+    this.releaseLeadership();
 
     // If we were still in the handshake phase, reject the connect() promise
     if (this.handshakeReject) {
@@ -1178,6 +1179,7 @@ export class GatewayClient {
     console.error('[Gateway] Aborting connection:', err.message);
     this.clearHandshake(err);
     this.rejectAllPending(err);
+    this.releaseLeadership();
 
     if (this.ws) {
       this.ws.close(4000, err.message.slice(0, 120));
