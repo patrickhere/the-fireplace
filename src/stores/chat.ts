@@ -313,14 +313,15 @@ function stripGatewayMetadata(text: string): string {
     /^System:\s*\[[\d\- :A-Z]+\]\s+\S+\s+(gateway\s+)?(connected|disconnected).*\n?/gim,
     ''
   );
-  // Remove "Conversation info (untrusted metadata):\n{...}\n" blocks (with optional code fence)
+  // Remove "Conversation info (untrusted metadata):" + JSON block
+  // Handles: optional language-tagged fences (```json), inline JSON, "Copy" artifacts
   cleaned = cleaned.replace(
-    /^Conversation info\s*\(untrusted metadata\):\s*\n```?\n?\{[\s\S]*?\}\n```?\n?/gim,
+    /^Conversation info\s*\(untrusted metadata\):\s*\n?(?:```(?:\w+)?\n?)?(?:Copy\n?)?\{[^}]*\}\n?(?:```\n?)?/gim,
     ''
   );
-  // Simpler variant: "Conversation info (untrusted metadata):" followed by JSON object
+  // Fallback: strip from "Conversation info" down to the next blank line if fence parsing fails
   cleaned = cleaned.replace(
-    /^Conversation info\s*\(untrusted metadata\):\s*\n\{[\s\S]*?\}\n?/gim,
+    /^Conversation info\s*\(untrusted metadata\):\s*\n[\s\S]*?(?=\n\s*\n|$)/gim,
     ''
   );
   // Remove gateway-injected timestamp prefixes: [Wed 2026-02-18 11:04 CST]
@@ -332,8 +333,43 @@ function stripGatewayMetadata(text: string): string {
   cleaned = cleaned.replace(/^System:\s*\[\d{4}-\d{2}-\d{2}[^\]]*\].*\n?/gim, '');
   // Remove [[reply_to_current]] markers
   cleaned = cleaned.replace(/\[\[reply_to_current\]\]/gi, '');
+  // Remove "[Chat messages since your last reply - for context]" wrappers
+  cleaned = cleaned.replace(
+    /^\[(?:Chat messages since your last reply|Current message)\s*[-\u2013\u2014]\s*[^\]]*\]\s*\n?/gim,
+    ''
+  );
   // Remove leading/trailing whitespace
   return cleaned.trim();
+}
+
+// ---- Sentinel Token Filtering ---------------------------------------------
+// OpenClaw uses internal sentinel tokens (NO_REPLY for memory flush,
+// HEARTBEAT_OK for heartbeat ack) that should never appear in the UI.
+
+const SILENT_REPLY_TOKENS = new Set(['NO_REPLY', 'HEARTBEAT_OK']);
+
+export function isSilentReplyMessage(msg: Message): boolean {
+  if (msg.role !== 'assistant') return false;
+  const text = msg.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('')
+    .trim();
+  const stripped = text.replace(/[.\s!?]+$/g, '').trim();
+  return SILENT_REPLY_TOKENS.has(stripped) || SILENT_REPLY_TOKENS.has(stripped.toUpperCase());
+}
+
+export function isInternalSystemMessage(msg: Message): boolean {
+  if (msg.role !== 'system') return false;
+  const text = msg.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('');
+  return (
+    text.includes('Session nearing compaction') ||
+    text.includes('reply with NO_REPLY') ||
+    text.includes('HEARTBEAT_OK')
+  );
 }
 
 function normalizeContentToBlocks(content: unknown): MessageContent[] {
@@ -487,7 +523,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const rawMessages = response.messages || [];
       const messages: Message[] = rawMessages
         .map((entry) => normalizeHistoryEntry(entry))
-        .filter((m): m is Message => m !== null);
+        .filter((m): m is Message => m !== null)
+        .filter((m) => !isSilentReplyMessage(m) && !isInternalSystemMessage(m));
 
       set({ messages });
     } catch (err) {
@@ -709,7 +746,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           }
 
-          if (matchedAssistant) {
+          if (matchedAssistant && !isSilentReplyMessage(matchedAssistant)) {
             // Found a response — add if not already present
             clearStreamTimers(get, set);
             set((state) => {
@@ -1006,6 +1043,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const finalText = extractTextFromEventMessage(normalized.message);
         const { streamingBuffer } = get();
         const effectiveText = finalText || streamingBuffer;
+
+        // Suppress silent sentinel tokens (NO_REPLY, HEARTBEAT_OK)
+        const strippedCheck = (effectiveText ?? '')
+          .replace(/[.\s!?]+$/g, '')
+          .trim()
+          .toUpperCase();
+        if (SILENT_REPLY_TOKENS.has(strippedCheck)) {
+          clearStreamTimers(get, set);
+          set({ isStreaming: false, streamingMessageId: null, streamingBuffer: '' });
+          // Still reload history to sync
+          const sessionForReload = get().activeSessionKey;
+          if (sessionForReload) {
+            setTimeout(() => {
+              const { activeSessionKey: currentKey } = get();
+              if (currentKey === sessionForReload) {
+                get().loadHistory(sessionForReload);
+              }
+            }, 800);
+          }
+          return;
+        }
 
         if (effectiveText) {
           const messageId = streamingMessageId || normalized.messageId || generateMessageId();
