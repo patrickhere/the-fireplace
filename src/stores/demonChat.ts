@@ -573,13 +573,9 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
       const session = sessionsResult.sessions.find(
         (s) => s.agentId === id || s.key.startsWith(`agent:${id}`)
       );
-      if (!session) {
-        // No existing session — use canonical session key to create one
-        const fallbackKey = `agent:${id}:main`;
-        await request('chat.send', { sessionKey: fallbackKey, text: message });
-        return;
-      }
-      await request('chat.send', { sessionKey: session.key, text: message });
+      const sessionKey = session?.key ?? `agent:${id}:main`;
+      // idempotencyKey is auto-injected by the gateway client for chat.send
+      await request('chat.send', { sessionKey, message });
     });
 
     await Promise.allSettled(sends);
