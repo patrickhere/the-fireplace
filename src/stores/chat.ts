@@ -306,7 +306,7 @@ function normalizeContentBlock(raw: unknown): MessageContent | null {
  * and system timestamps to user messages. These are useful for the AI
  * but shouldn't be shown in the chat UI.
  */
-function stripGatewayMetadata(text: string): string {
+export function stripGatewayMetadata(text: string): string {
   let cleaned = text;
   // Remove "System: [timestamp] channel connected/disconnected" lines
   cleaned = cleaned.replace(
@@ -746,8 +746,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           }
 
-          if (matchedAssistant && !isSilentReplyMessage(matchedAssistant)) {
-            // Found a response — add if not already present
+          if (matchedAssistant && isSilentReplyMessage(matchedAssistant)) {
+            // Silent token (NO_REPLY / HEARTBEAT_OK) — terminal outcome.
+            // Stop polling immediately, don't add to messages.
+            clearStreamTimers(get, set);
+            set({ isStreaming: false, streamingMessageId: null, streamingBuffer: '' });
+            console.log('[Chat] Silent token found via poll — suppressed');
+            // Reload history to sync (filters will strip it)
+            const sk = get().activeSessionKey;
+            if (sk) {
+              setTimeout(() => {
+                if (get().activeSessionKey === sk) get().loadHistory(sk);
+              }, 800);
+            }
+            return;
+          }
+
+          if (matchedAssistant) {
+            // Found a real response — add if not already present
             clearStreamTimers(get, set);
             set((state) => {
               const uidx = state.messages.findIndex((m) => m.id === userMessage.id);

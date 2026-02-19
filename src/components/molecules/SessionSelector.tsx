@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, stripGatewayMetadata } from '@/stores/chat';
 import { useConnectionStore } from '@/stores/connection';
 import { formatSessionKey } from '@/lib/utils';
 import {
@@ -79,7 +79,12 @@ export function SessionSelector() {
       <SelectContent>
         {sessions.map((session) => (
           <SelectItem key={session.key} value={session.key}>
-            {formatSessionKey(session.key, session.derivedTitle || session.label)}
+            {formatSessionKey(
+              session.key,
+              session.derivedTitle
+                ? stripGatewayMetadata(session.derivedTitle) || session.label
+                : session.label
+            )}
           </SelectItem>
         ))}
       </SelectContent>

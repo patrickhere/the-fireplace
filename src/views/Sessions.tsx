@@ -11,6 +11,7 @@ import { SessionCard } from '@/components/molecules/SessionCard';
 import { SessionActionsCell } from '@/components/molecules/SessionActionsCell';
 import { DataTable } from '@/components/organisms/DataTable';
 import { formatSessionKey } from '@/lib/utils';
+import { stripGatewayMetadata } from '@/stores/chat';
 import type { ColumnDef } from '@tanstack/react-table';
 
 export function Sessions() {
@@ -67,13 +68,21 @@ export function Sessions() {
     () => [
       {
         header: 'Name',
-        accessorFn: (row) => row.derivedTitle || formatSessionKey(row.key, row.label),
+        accessorFn: (row) => {
+          const sanitized = row.derivedTitle ? stripGatewayMetadata(row.derivedTitle) : '';
+          return sanitized || formatSessionKey(row.key, row.label);
+        },
         id: 'name',
-        cell: ({ row }) => (
-          <span className="text-sm text-zinc-100">
-            {row.original.derivedTitle || formatSessionKey(row.original.key, row.original.label)}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const sanitized = row.original.derivedTitle
+            ? stripGatewayMetadata(row.original.derivedTitle)
+            : '';
+          return (
+            <span className="text-sm text-zinc-100">
+              {sanitized || formatSessionKey(row.original.key, row.original.label)}
+            </span>
+          );
+        },
       },
       {
         header: 'Model',

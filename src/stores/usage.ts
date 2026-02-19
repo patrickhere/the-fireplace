@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { classifyModel } from '@/lib/modelTiers';
+import { stripGatewayMetadata } from '@/stores/chat';
 
 // ---- Usage Types ----------------------------------------------------------
 
@@ -223,7 +224,11 @@ export const useUsageStore = create<UsageState>((set) => ({
           const usage = usageMap.get(s.key);
           return {
             sessionKey: s.key,
-            name: s.derivedTitle ?? s.name ?? s.label ?? s.key,
+            name:
+              (s.derivedTitle ? stripGatewayMetadata(s.derivedTitle) : '') ||
+              s.name ||
+              s.label ||
+              s.key,
             model: s.model ?? 'unknown',
             agentId: s.agentId ?? '',
             inputTokens: usage?.inputTokens ?? 0,
@@ -307,7 +312,11 @@ export const useUsageStore = create<UsageState>((set) => ({
           const usage = usageMap.get(s.key);
           return {
             sessionKey: s.key,
-            name: s.derivedTitle ?? s.name ?? s.label ?? s.key,
+            name:
+              (s.derivedTitle ? stripGatewayMetadata(s.derivedTitle) : '') ||
+              s.name ||
+              s.label ||
+              s.key,
             model: s.model ?? 'unknown',
             agentId: s.agentId ?? '',
             inputTokens: usage?.inputTokens ?? 0,
