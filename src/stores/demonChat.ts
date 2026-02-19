@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import type { Unsubscribe } from '@/gateway/types';
-import type { ChatEventPayload } from '@/stores/chat';
+import { type ChatEventPayload, extractTextFromEventMessage } from '@/stores/chat';
 import type { Agent } from '@/stores/agents';
 
 // ---- Types ----------------------------------------------------------------
@@ -55,28 +55,6 @@ const INJECT_DEBOUNCE_MS = 2000;
 
 function generateId(): string {
   return `dcm_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-}
-
-function extractTextFromEventMessage(message: unknown): string {
-  if (typeof message === 'string') return message;
-  if (Array.isArray(message)) {
-    const parts = message
-      .map((item) => {
-        if (typeof item === 'string') return item;
-        if (item && typeof item === 'object' && 'text' in item) {
-          const text = (item as { text?: unknown }).text;
-          return typeof text === 'string' ? text : '';
-        }
-        return '';
-      })
-      .filter(Boolean);
-    return parts.join('\n');
-  }
-  if (message && typeof message === 'object' && 'text' in message) {
-    const text = (message as { text?: unknown }).text;
-    return typeof text === 'string' ? text : '';
-  }
-  return '';
 }
 
 /** Match an agent from a sessionKey (which is often prefixed with agentId). */
@@ -302,7 +280,7 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
           // - delta/done/error shape
           // - state/message/errorMessage shape
           if (
-            !payload.delta &&
+            payload.delta === undefined &&
             !payload.done &&
             !payload.error &&
             !payload.state &&
@@ -578,33 +556,33 @@ export const useDemonChatStore = create<DemonChatState>((set, get) => ({
     set({ _lastInject: { demonId, text: message, ts: now } });
 
     const { useConnectionStore } = await import('./connection');
+    const { useAgentsStore } = await import('./agents');
     const { request } = useConnectionStore.getState();
 
-    // Find an active session for the demon via sessions.list
+    // Broadcast mode: send to all demons in parallel
+    const targetIds =
+      demonId === '__all__' ? useAgentsStore.getState().agents.map((a) => a.id) : [demonId];
+
+    // Find active sessions for target demons
     const sessionsResult = await request<{
       sessions: Array<{ key: string; agentId?: string }>;
-    }>('sessions.list', {
-      limit: 200,
-      includeGlobal: true,
-      includeUnknown: true,
+    }>('sessions.list', { limit: 200 });
+
+    const sends = targetIds.map(async (id) => {
+      // Match against s.agentId (if gateway provides it) or the canonical prefix.
+      const session = sessionsResult.sessions.find(
+        (s) => s.agentId === id || s.key.startsWith(`agent:${id}`)
+      );
+      if (!session) {
+        // No existing session — use canonical session key to create one
+        const fallbackKey = `agent:${id}:main`;
+        await request('chat.send', { sessionKey: fallbackKey, text: message });
+        return;
+      }
+      await request('chat.send', { sessionKey: session.key, text: message });
     });
 
-    // BUG FIX #6: Session keys use "agent:<agentId>" prefix, not bare demonId.
-    // Match against s.agentId (if gateway provides it) or the canonical prefix.
-    const demonSession = sessionsResult.sessions.find(
-      (s) => s.agentId === demonId || s.key.startsWith(`agent:${demonId}`)
-    );
-
-    if (!demonSession) {
-      console.warn(`[DemonChat] No active session found for demon ${demonId}`);
-      return;
-    }
-
-    // ChatInjectParamsSchema: { sessionKey, message: string, label?: string }
-    await request('chat.inject', {
-      sessionKey: demonSession.key,
-      message,
-    });
+    await Promise.allSettled(sends);
   },
 
   getFilteredMessages: () => {

@@ -584,6 +584,7 @@ export function DemonChatRoom() {
               <SelectValue placeholder="Select demon..." />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__all__">🔥 All Demons</SelectItem>
               {agents.map((agent) => (
                 <SelectItem key={agent.id} value={agent.id}>
                   {agent.identity?.emoji ?? ''} {agent.identity?.name ?? agent.id}
