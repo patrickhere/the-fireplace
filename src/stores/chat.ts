@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
 import { useConnectionStore } from './connection';
+import { useSessionsStore } from './sessions';
 
 // ---- Message Types --------------------------------------------------------
 
@@ -189,7 +190,7 @@ function generateAttachmentId(): string {
   return `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function extractTextFromEventMessage(message: unknown): string {
+export function extractTextFromEventMessage(message: unknown): string {
   if (typeof message === 'string') return message;
   if (Array.isArray(message)) {
     const parts = message
@@ -372,7 +373,7 @@ function normalizeContentToBlocks(content: unknown): MessageContent[] {
   return [];
 }
 
-function normalizeHistoryEntry(entry: unknown): Message | null {
+export function normalizeHistoryEntry(entry: unknown): Message | null {
   // Must be an object
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
   const raw = entry as Record<string, unknown>;
@@ -1003,14 +1004,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Handle alternate gateway schema: final may carry the completed message
       if (normalized.state === 'final') {
         const finalText = extractTextFromEventMessage(normalized.message);
-        if (finalText) {
+        const { streamingBuffer } = get();
+        const effectiveText = finalText || streamingBuffer;
+
+        if (effectiveText) {
           const messageId = streamingMessageId || normalized.messageId || generateMessageId();
           set((state) => {
             const existingIndex = state.messages.findIndex((m) => m.id === messageId);
             const updatedMessage: Message = {
               id: messageId,
               role: 'assistant',
-              content: [{ type: 'text', text: finalText }],
+              content: [{ type: 'text', text: effectiveText }],
               timestamp: Date.now(),
             };
 
@@ -1030,6 +1034,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
           streamingMessageId: null,
           streamingBuffer: '',
         });
+
+        // Always reload history after final to sync with server truth.
+        // If no text arrived at all (no deltas, no final message), this
+        // is the only way to recover the assistant response.
+        const sessionForReload = get().activeSessionKey;
+        if (sessionForReload) {
+          setTimeout(() => {
+            const { activeSessionKey: currentKey } = get();
+            if (currentKey === sessionForReload) {
+              get().loadHistory(sessionForReload);
+            }
+          }, 800);
+
+          // Refresh session list so derived titles update
+          setTimeout(() => {
+            useSessionsStore.getState().loadSessions();
+          }, 1500);
+        }
         return;
       }
 

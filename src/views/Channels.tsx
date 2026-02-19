@@ -7,10 +7,12 @@ import { useChannelsStore, type ChannelAccount } from '@/stores/channels';
 import { useConnectionStore } from '@/stores/connection';
 import { useIsMobile } from '@/hooks/usePlatform';
 import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
+import { StatusDot } from '@/components/atoms/StatusDot';
+import { StatusPill } from '@/components/atoms/StatusPill';
 
-// ---- Status Dot Component -------------------------------------------------
+// ---- Status Indicator -----------------------------------------------------
 
-function StatusDot({
+function ChannelStatus({
   connected,
   running,
   reconnectAttempts,
@@ -21,23 +23,23 @@ function StatusDot({
   reconnectAttempts?: number;
   lastError?: string;
 }) {
-  let color = 'bg-zinc-500'; // offline
+  let status: 'online' | 'warning' | 'error' | 'offline' = 'offline';
   let label = 'Offline';
 
   if (running && connected) {
-    color = 'bg-emerald-500'; // connected
+    status = 'online';
     label = 'Connected';
   } else if (running && reconnectAttempts && reconnectAttempts > 0) {
-    color = 'bg-amber-500'; // warning (reconnecting)
+    status = 'warning';
     label = 'Reconnecting';
   } else if (lastError) {
-    color = 'bg-red-500'; // error
+    status = 'error';
     label = 'Error';
   }
 
   return (
     <div className="flex items-center gap-2">
-      <div className={`h-2 w-2 rounded-full ${color}`} />
+      <StatusDot status={status} pulse={status === 'warning'} />
       <span className="text-xs text-zinc-400">{label}</span>
     </div>
   );
@@ -62,13 +64,9 @@ function AccountRow({ account, channel }: { account: ChannelAccount; channel: st
             <span className="text-sm font-medium text-zinc-100">
               {account.name || account.accountId}
             </span>
-            {!account.enabled && (
-              <span className="rounded-full bg-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
-                Disabled
-              </span>
-            )}
+            {!account.enabled && <StatusPill status="idle" label="Disabled" />}
           </div>
-          <StatusDot
+          <ChannelStatus
             connected={account.connected}
             running={account.running}
             reconnectAttempts={account.reconnectAttempts}

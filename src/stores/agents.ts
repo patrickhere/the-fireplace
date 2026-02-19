@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
+import { optimisticMutation } from '@/lib/optimistic';
 
 // ---- Agent Types ----------------------------------------------------------
 
@@ -229,32 +230,41 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
-    // Optimistic remove
-    const previous = get().agents;
-    set((state) => ({ agents: state.agents.filter((a) => a.id !== agentId) }));
-
-    // Clear selection if deleted agent was selected
-    if (get().selectedAgentId === agentId) {
-      set({ selectedAgentId: null, agentFiles: [], selectedFile: null, fileContent: null });
-    }
-
-    set({ showDeleteModal: false });
-
     try {
       set({ error: null });
 
-      await request('agents.delete', {
-        agentId,
-        deleteFiles,
+      await optimisticMutation(get, (partial) => set(partial), {
+        snapshot: (state) => ({
+          agents: state.agents,
+          selectedAgentId: state.selectedAgentId,
+          agentFiles: state.agentFiles,
+          selectedFile: state.selectedFile,
+          fileContent: state.fileContent,
+          showDeleteModal: state.showDeleteModal,
+        }),
+        apply: (state) => {
+          const deletingSelected = state.selectedAgentId === agentId;
+          return {
+            agents: state.agents.filter((a) => a.id !== agentId),
+            selectedAgentId: deletingSelected ? null : state.selectedAgentId,
+            agentFiles: deletingSelected ? [] : state.agentFiles,
+            selectedFile: deletingSelected ? null : state.selectedFile,
+            fileContent: deletingSelected ? null : state.fileContent,
+            showDeleteModal: false,
+          };
+        },
+        execute: () =>
+          request('agents.delete', {
+            agentId,
+            deleteFiles,
+          }),
+        errorMessage: 'Failed to delete agent',
       });
 
       toast.success('Agent deleted');
     } catch (err) {
-      // Rollback on failure
-      set({ agents: previous });
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete agent';
       set({ error: errorMessage });
-      toast.error(errorMessage);
       console.error('[Agents] Failed to delete agent:', err);
     }
   },

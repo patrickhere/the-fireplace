@@ -6,6 +6,8 @@ import { useEffect, useCallback } from 'react';
 import { useDemonHealthStore, type DemonStatus } from '@/stores/demonHealth';
 import { useConnectionStore } from '@/stores/connection';
 import { LoadingSpinner, EmptyState } from '@/components/StateIndicators';
+import { StatusDot } from '@/components/atoms/StatusDot';
+import { Card, CardContent } from '@/components/ui/card';
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -39,21 +41,12 @@ function shortModel(model: string): string {
     .replace('claude-haiku-4-5', 'haiku-4.5')
     .replace('gemini-2.5-flash', 'flash-2.5')
     .replace('gemini-2.5-flash-lite', 'flash-lite')
-    .replace('gpt-4.1', 'gpt-4.1')
-    .replace('gpt-5-mini', 'gpt-5m')
-    .replace('gpt-4o', 'gpt-4o');
+    .replace('gpt-5-mini', 'gpt-5m');
 }
 
-// ---- Status Dot -----------------------------------------------------------
+// ---- Status Indicator -----------------------------------------------------
 
-function StatusDot({ state }: { state: DemonStatus['state'] }) {
-  const colors: Record<DemonStatus['state'], string> = {
-    working: 'bg-emerald-500',
-    idle: 'bg-amber-500',
-    error: 'bg-red-500',
-    offline: 'bg-zinc-700',
-  };
-
+function DemonStateIndicator({ state }: { state: DemonStatus['state'] }) {
   const labels: Record<DemonStatus['state'], string> = {
     working: 'Working',
     idle: 'Idle',
@@ -63,7 +56,17 @@ function StatusDot({ state }: { state: DemonStatus['state'] }) {
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className={`h-2 w-2 rounded-full ${colors[state]}`} />
+      <StatusDot
+        status={
+          state === 'working'
+            ? 'online'
+            : state === 'idle'
+              ? 'warning'
+              : state === 'error'
+                ? 'error'
+                : 'offline'
+        }
+      />
       <span className="text-xs text-zinc-400">{labels[state]}</span>
     </div>
   );
@@ -91,45 +94,47 @@ function CliBackendBadge({ cliBackend }: { cliBackend: DemonStatus['cliBackend']
 
 function DemonCard({ demon }: { demon: DemonStatus }) {
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
-      {/* Top: emoji + name + status */}
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">{demon.demonEmoji}</span>
-          <span className="text-sm font-medium text-zinc-100">{demon.demonName}</span>
+    <Card className="bg-zinc-800">
+      <CardContent className="p-3">
+        {/* Top: emoji + name + status */}
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-base">{demon.demonEmoji}</span>
+            <span className="text-sm font-medium text-zinc-100">{demon.demonName}</span>
+          </div>
+          <DemonStateIndicator state={demon.state} />
         </div>
-        <StatusDot state={demon.state} />
-      </div>
 
-      {/* Middle: current task */}
-      <div className="mb-2 min-h-[2.5rem]">
-        {demon.currentTask ? (
-          <p className="line-clamp-2 text-sm text-zinc-400">{demon.currentTask}</p>
-        ) : (
-          <p className="text-sm text-zinc-600">&mdash;</p>
+        {/* Middle: current task */}
+        <div className="mb-2 min-h-[2.5rem]">
+          {demon.currentTask ? (
+            <p className="line-clamp-2 text-sm text-zinc-400">{demon.currentTask}</p>
+          ) : (
+            <p className="text-sm text-zinc-600">&mdash;</p>
+          )}
+        </div>
+
+        {/* Bottom: model badge, sessions, last activity */}
+        <div className="flex items-center justify-between text-xs text-zinc-500">
+          <div className="flex items-center gap-2">
+            <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-zinc-300">
+              {shortModel(demon.activeModel)}
+            </span>
+            <span>
+              {demon.activeSessions} {demon.activeSessions === 1 ? 'session' : 'sessions'}
+            </span>
+          </div>
+          <span>{relativeTime(demon.lastActivity)}</span>
+        </div>
+
+        {/* CLI Backend indicator */}
+        {demon.cliBackend.active && (
+          <div className="mt-2 border-t border-zinc-700 pt-2">
+            <CliBackendBadge cliBackend={demon.cliBackend} />
+          </div>
         )}
-      </div>
-
-      {/* Bottom: model badge, sessions, last activity */}
-      <div className="flex items-center justify-between text-xs text-zinc-500">
-        <div className="flex items-center gap-2">
-          <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-zinc-300">
-            {shortModel(demon.activeModel)}
-          </span>
-          <span>
-            {demon.activeSessions} {demon.activeSessions === 1 ? 'session' : 'sessions'}
-          </span>
-        </div>
-        <span>{relativeTime(demon.lastActivity)}</span>
-      </div>
-
-      {/* CLI Backend indicator */}
-      {demon.cliBackend.active && (
-        <div className="mt-2 border-t border-zinc-700 pt-2">
-          <CliBackendBadge cliBackend={demon.cliBackend} />
-        </div>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 

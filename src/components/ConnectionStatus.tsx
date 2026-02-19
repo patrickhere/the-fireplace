@@ -3,6 +3,7 @@ import { useConnectionStore } from '@/stores/connection';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { StatusDot } from '@/components/atoms/StatusDot';
 
 export function ConnectionStatus() {
   const {
@@ -57,6 +58,14 @@ export function ConnectionStatus() {
   };
 
   const config = statusConfig[status];
+  const dotStatus =
+    status === 'connected'
+      ? 'online'
+      : status === 'error'
+        ? 'error'
+        : status === 'disconnected'
+          ? 'offline'
+          : 'warning';
   const versionInfo = serverInfo
     ? `v${serverInfo.version} (protocol ${serverInfo.protocol})`
     : null;
@@ -81,7 +90,10 @@ export function ConnectionStatus() {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-3">
       <div className="flex items-center gap-2">
-        <span className={cn('h-2 w-2 rounded-full', config.color)} />
+        <StatusDot
+          status={dotStatus}
+          pulse={status === 'connecting' || status === 'reconnecting'}
+        />
         <div className="min-w-0 flex-1">
           <p className={cn('text-sm font-medium', config.textColor)}>{config.text}</p>
           {versionInfo && <p className="truncate text-xs text-zinc-500">{versionInfo}</p>}

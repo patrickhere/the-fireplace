@@ -16,6 +16,7 @@ import type {
   Unsubscribe,
   RequestOptions,
   PresenceEntry,
+  GatewayMethod,
 } from '@/gateway/types';
 import { buildClientInfo, getDeviceId } from '@/gateway/protocol';
 import { deleteDeviceToken } from '@/lib/keychain';
@@ -71,6 +72,7 @@ interface ConnectionState {
   _presenceUnsub: Unsubscribe | null;
 
   // -- Actions
+  initGatewayUrl: () => Promise<void>;
   setGatewayUrl: (url: string) => void;
   connect: () => Promise<void>;
   disconnect: () => void;
@@ -78,7 +80,11 @@ interface ConnectionState {
   clearDeviceToken: () => Promise<void>;
 
   // -- Request forwarding
-  request: <T = unknown>(method: string, params?: unknown, options?: RequestOptions) => Promise<T>;
+  request: <T = unknown>(
+    method: GatewayMethod,
+    params?: unknown,
+    options?: RequestOptions
+  ) => Promise<T>;
 
   // -- Event forwarding
   subscribe: <T = unknown>(event: string, handler: EventHandler<T>) => Unsubscribe;
@@ -87,7 +93,9 @@ interface ConnectionState {
 
 // ---- Default Gateway URL --------------------------------------------------
 
-const DEFAULT_GATEWAY_URL = 'wss://patricks-macmini.pangolin-typhon.ts.net/';
+export const DEFAULT_GATEWAY_URL = 'wss://patricks-macmini.pangolin-typhon.ts.net/';
+const CONNECTION_STORE_PATH = 'connection-settings.json';
+const GATEWAY_URL_KEY = 'gatewayUrl';
 
 // ---- Noop unsubscribe (returned when client is not connected) -------------
 
@@ -111,8 +119,32 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   client: null,
   _presenceUnsub: null,
 
+  initGatewayUrl: async () => {
+    try {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const store = await load(CONNECTION_STORE_PATH, { defaults: {}, autoSave: true });
+      const saved = await store.get<string>(GATEWAY_URL_KEY);
+      if (typeof saved === 'string' && saved.trim()) {
+        set({ gatewayUrl: saved.trim() });
+      }
+    } catch (err) {
+      console.debug('[ConnectionStore] plugin-store unavailable, using default URL', err);
+    }
+  },
+
   setGatewayUrl: (url: string) => {
-    set({ gatewayUrl: url });
+    const trimmed = url.trim();
+    set({ gatewayUrl: trimmed });
+
+    void (async () => {
+      try {
+        const { load } = await import('@tauri-apps/plugin-store');
+        const store = await load(CONNECTION_STORE_PATH, { defaults: {}, autoSave: true });
+        await store.set(GATEWAY_URL_KEY, trimmed);
+      } catch (err) {
+        console.debug('[ConnectionStore] Failed to persist gateway URL', err);
+      }
+    })();
   },
 
   connect: async () => {
@@ -266,7 +298,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   request: async <T = unknown>(
-    method: string,
+    method: GatewayMethod,
     params?: unknown,
     options?: RequestOptions
   ): Promise<T> => {

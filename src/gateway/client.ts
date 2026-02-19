@@ -22,6 +22,7 @@ import type {
   ReconnectState,
   GatewayError,
   ShutdownEventPayload,
+  GatewayMethod,
 } from './types';
 import { SIDE_EFFECTING_METHODS } from './types';
 import {
@@ -62,6 +63,22 @@ const RATE_LIMIT_REFILL_PER_SEC = 20; // sustained rate (tokens/second)
 
 // Minimum gateway server version supported (semver prefix check)
 const MIN_GATEWAY_VERSION = '2026.1.0';
+
+/**
+ * Deterministic leader selection for simultaneous contenders.
+ * Lower lexical UUID wins.
+ */
+export function pickLeaderWinnerId(contenderIds: Iterable<string>): string | null {
+  const sorted = [...contenderIds].sort();
+  return sorted[0] ?? null;
+}
+
+/**
+ * Whether a follower should promote itself after missed heartbeats.
+ */
+export function shouldPromoteFollower(missedHeartbeats: number): boolean {
+  return missedHeartbeats >= LEADER_MISSED_HEARTBEATS_THRESHOLD;
+}
 
 // ---- Custom Error ---------------------------------------------------------
 
@@ -159,6 +176,7 @@ export class GatewayClient {
   private _followerWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private _missedHeartbeats = 0;
   private _beforeUnloadHandler: (() => void) | null = null;
+  private _promotionInProgress = false;
 
   // -- Rate limiter (token bucket)
   private _rlTokens = RATE_LIMIT_CAPACITY;
@@ -418,7 +436,7 @@ export class GatewayClient {
    * @returns The response payload (the `payload` field from the ResponseFrame)
    */
   async request<T = unknown>(
-    method: string,
+    method: GatewayMethod,
     params?: unknown,
     options?: RequestOptions
   ): Promise<T> {
@@ -515,7 +533,7 @@ export class GatewayClient {
    * auto-generated idempotency key.
    */
   async requestWithIdempotency<T = unknown>(
-    method: string,
+    method: GatewayMethod,
     params?: unknown,
     options?: Omit<RequestOptions, 'idempotencyKey'>
   ): Promise<T> {
@@ -1363,8 +1381,7 @@ export class GatewayClient {
         }
 
         // Deterministic tie-break: lowest UUID wins
-        const sorted = [...competingIds].sort();
-        const winnerId = sorted[0];
+        const winnerId = pickLeaderWinnerId(competingIds);
 
         if (winnerId === this._contenderId) {
           // We won — become leader
@@ -1444,7 +1461,7 @@ export class GatewayClient {
     // Check for missed heartbeats at the heartbeat interval
     this._followerWatchdogTimer = setInterval(() => {
       this._missedHeartbeats++;
-      if (this._missedHeartbeats >= LEADER_MISSED_HEARTBEATS_THRESHOLD) {
+      if (shouldPromoteFollower(this._missedHeartbeats)) {
         console.log(
           `[Gateway] Leader missed ${this._missedHeartbeats} heartbeats — promoting to leader`
         );
@@ -1467,6 +1484,11 @@ export class GatewayClient {
    * thundering herd if multiple followers detect the same leader death.
    */
   private promoteToLeader(): void {
+    // Guard against concurrent promotion attempts (e.g. multiple missed
+    // heartbeat checks firing before the first promotion resolves)
+    if (this._promotionInProgress) return;
+    this._promotionInProgress = true;
+
     this.stopFollowerWatchdog();
 
     // Close existing follower channel before opening leader channel
@@ -1488,10 +1510,16 @@ export class GatewayClient {
     setTimeout(() => {
       // Re-run leader election — if another follower already won, we'll defer
       void this.tryClaimLeadership().then((isLeader) => {
+        this._promotionInProgress = false;
         if (isLeader) {
           // We are now the leader — trigger a connect
           console.log('[Gateway] Promoted to leader — connecting');
           void this.connect();
+        } else {
+          // Lost re-election — restart follower watchdog so we can
+          // promote again if the new leader also dies
+          console.log('[Gateway] Lost re-election — restarting follower watchdog');
+          this.startFollowerWatchdog();
         }
       });
     }, jitter);
@@ -1520,6 +1548,15 @@ export class GatewayClient {
       this._beforeUnloadHandler = null;
     }
     if (this._leaderChannel) {
+      // Broadcast leader-release so followers can promote immediately
+      // instead of waiting for missed heartbeat threshold
+      if (this._isLeader) {
+        try {
+          this._leaderChannel.postMessage({ type: 'leader-release' });
+        } catch {
+          // Ignore — channel may already be closing
+        }
+      }
       try {
         this._leaderChannel.onmessage = null;
         this._leaderChannel.close();

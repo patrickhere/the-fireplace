@@ -7,6 +7,15 @@ import { useDemonTasksStore, type DemonTask } from '@/stores/demonTasks';
 import { useDemonHealthStore } from '@/stores/demonHealth';
 import { useConnectionStore } from '@/stores/connection';
 import { EmptyState } from '@/components/StateIndicators';
+import { StatusPill } from '@/components/atoms/StatusPill';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ---- Helpers --------------------------------------------------------------
 
@@ -41,9 +50,7 @@ function shortModel(model: string): string {
     .replace('claude-sonnet-4-5', 'sonnet-4.5')
     .replace('claude-haiku-4-5', 'haiku-4.5')
     .replace('gemini-2.5-flash', 'flash-2.5')
-    .replace('gpt-4.1', 'gpt-4.1')
-    .replace('gpt-5-mini', 'gpt-5m')
-    .replace('gpt-4o', 'gpt-4o');
+    .replace('gpt-5-mini', 'gpt-5m');
 }
 
 // ---- FLIP Animation Hook --------------------------------------------------
@@ -136,57 +143,59 @@ function TaskCard({
   const opacityClass = isDoneOld ? 'opacity-50' : '';
 
   return (
-    <div
-      ref={cardRef}
-      className={`rounded-lg border bg-zinc-800 p-3 ${borderClass} ${opacityClass}`}
-    >
-      {/* Description */}
-      <p className="mb-2 line-clamp-2 text-sm text-zinc-200">{task.description}</p>
+    <Card ref={cardRef} className={`bg-zinc-800 ${borderClass} ${opacityClass}`}>
+      <CardContent className="p-3">
+        {/* Description */}
+        <p className="mb-2 line-clamp-2 text-sm text-zinc-200">{task.description}</p>
 
-      {/* Assigned demon */}
-      <div className="mb-1 flex items-center gap-1 text-xs text-zinc-400">
-        <span>&rarr;</span>
-        <span>{task.assignedToEmoji}</span>
-        <span>{task.assignedToName}</span>
-      </div>
-
-      {/* Delegated by */}
-      <div className="mb-2 flex items-center gap-1 text-xs text-zinc-500">
-        <span>by</span>
-        <span>{task.delegatedByEmoji}</span>
-        <span>{task.delegatedByName}</span>
-      </div>
-
-      {/* Bottom row: model, time, CLI backend */}
-      <div className="flex items-center justify-between text-xs text-zinc-500">
-        <div className="flex items-center gap-2">
-          {task.model && (
-            <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-zinc-300">
-              {shortModel(task.model)}
-            </span>
-          )}
-          {task.cliBackend && (
-            <span className="flex items-center gap-1 text-amber-400">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
-              {task.cliBackend === 'claude-code' ? 'Claude Code' : 'Codex'}
-            </span>
-          )}
+        {/* Assigned demon */}
+        <div className="mb-1 flex items-center gap-1 text-xs text-zinc-400">
+          <span>&rarr;</span>
+          <span>{task.assignedToEmoji}</span>
+          <span>{task.assignedToName}</span>
         </div>
-        <span>
-          {task.status === 'queued' && relativeTime(task.createdAt)}
-          {task.status === 'in_progress' && task.startedAt && elapsed(task.startedAt)}
-          {task.status === 'done' && task.startedAt && elapsed(task.startedAt, task.completedAt)}
-          {task.status === 'failed' && task.startedAt && elapsed(task.startedAt, task.completedAt)}
-        </span>
-      </div>
 
-      {/* Error text for failed tasks */}
-      {isFailed && task.error && (
-        <div className="mt-2 border-t border-red-500/30 pt-2 text-xs text-red-400">
-          {task.error}
+        {/* Delegated by */}
+        <div className="mb-2 flex items-center gap-1 text-xs text-zinc-500">
+          <span>by</span>
+          <span>{task.delegatedByEmoji}</span>
+          <span>{task.delegatedByName}</span>
         </div>
-      )}
-    </div>
+
+        {/* Bottom row: model, time, CLI backend */}
+        <div className="flex items-center justify-between text-xs text-zinc-500">
+          <div className="flex items-center gap-2">
+            <StatusPill status={task.status} className="text-[10px]" />
+            {task.model && (
+              <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-zinc-300">
+                {shortModel(task.model)}
+              </span>
+            )}
+            {task.cliBackend && (
+              <span className="flex items-center gap-1 text-amber-400">
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                {task.cliBackend === 'claude-code' ? 'Claude Code' : 'Codex'}
+              </span>
+            )}
+          </div>
+          <span>
+            {task.status === 'queued' && relativeTime(task.createdAt)}
+            {task.status === 'in_progress' && task.startedAt && elapsed(task.startedAt)}
+            {task.status === 'done' && task.startedAt && elapsed(task.startedAt, task.completedAt)}
+            {task.status === 'failed' &&
+              task.startedAt &&
+              elapsed(task.startedAt, task.completedAt)}
+          </span>
+        </div>
+
+        {/* Error text for failed tasks */}
+        {isFailed && task.error && (
+          <div className="mt-2 border-t border-red-500/30 pt-2 text-xs text-red-400">
+            {task.error}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -296,18 +305,22 @@ export function DemonKanban() {
           </div>
 
           {/* Filter dropdown */}
-          <select
-            value={filterDemon ?? ''}
-            onChange={(e) => setFilter(e.target.value || null)}
-            className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 focus:border-amber-500 focus:outline-none"
+          <Select
+            value={filterDemon ?? '__all__'}
+            onValueChange={(value) => setFilter(value === '__all__' ? null : value)}
           >
-            <option value="">All Demons</option>
-            {demons.map((d) => (
-              <option key={d.demonId} value={d.demonId}>
-                {d.demonEmoji} {d.demonName}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-52">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Demons</SelectItem>
+              {demons.map((d) => (
+                <SelectItem key={d.demonId} value={d.demonId}>
+                  {d.demonEmoji} {d.demonName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

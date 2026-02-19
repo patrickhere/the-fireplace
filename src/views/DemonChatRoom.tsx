@@ -7,6 +7,13 @@ import { useDemonChatStore, type DemonChatMessage } from '@/stores/demonChat';
 import { useAgentsStore, type Agent } from '@/stores/agents';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 import { EmptyState } from '@/components/StateIndicators';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ---- Caret-position helper -------------------------------------------------
 
@@ -572,18 +579,18 @@ export function DemonChatRoom() {
         )}
 
         <div className="flex items-end gap-2">
-          <select
-            value={injectDemonId}
-            onChange={(e) => setInjectDemonId(e.target.value)}
-            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
-          >
-            <option value="">Select demon...</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.identity?.emoji ?? ''} {agent.identity?.name ?? agent.id}
-              </option>
-            ))}
-          </select>
+          <Select value={injectDemonId} onValueChange={setInjectDemonId}>
+            <SelectTrigger className="w-52 rounded border-zinc-700 bg-zinc-800">
+              <SelectValue placeholder="Select demon..." />
+            </SelectTrigger>
+            <SelectContent>
+              {agents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.identity?.emoji ?? ''} {agent.identity?.name ?? agent.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <textarea
             ref={textareaRef}

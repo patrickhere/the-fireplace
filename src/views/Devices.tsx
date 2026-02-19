@@ -2,10 +2,14 @@
 // Devices View
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useDevicesStore, type DevicePairRequest, type PairedDevice } from '@/stores/devices';
 import { useConnectionStore } from '@/stores/connection';
 import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
+import { StatusDot } from '@/components/atoms/StatusDot';
+import { StatusPill } from '@/components/atoms/StatusPill';
+import { DataTable } from '@/components/organisms/DataTable';
+import type { ColumnDef } from '@tanstack/react-table';
 
 // ---- Confirmation Dialog --------------------------------------------------
 
@@ -84,15 +88,11 @@ function PairingRequestCard({ request }: { request: DevicePairRequest }) {
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <div className="mb-1 flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-amber-500" />
+            <StatusDot status="warning" />
             <span className="text-sm font-medium text-zinc-100">
               {request.displayName || request.deviceId}
             </span>
-            {request.isRepair && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">
-                Repair
-              </span>
-            )}
+            {request.isRepair && <StatusPill status="warning" label="Repair" />}
           </div>
 
           <div className="space-y-0.5 text-xs text-zinc-400">
@@ -138,9 +138,9 @@ function PairingRequestCard({ request }: { request: DevicePairRequest }) {
   );
 }
 
-// ---- Paired Device Row ----------------------------------------------------
+// ---- Paired Device Actions ------------------------------------------------
 
-function PairedDeviceRow({ device }: { device: PairedDevice }) {
+function PairedDeviceActions({ device }: { device: PairedDevice }) {
   const { rotateToken, revokeToken } = useDevicesStore();
   const [confirmAction, setConfirmAction] = useState<'rotate' | 'revoke' | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -160,69 +160,45 @@ function PairedDeviceRow({ device }: { device: PairedDevice }) {
   };
 
   return (
-    <tr className="border-b border-zinc-700/50 last:border-0">
-      <td className="px-3 py-2">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-emerald-500" />
-          <span className="text-sm text-zinc-100">
-            {device.displayName || device.deviceId.slice(0, 12) + '...'}
-          </span>
-        </div>
-      </td>
-      <td className="px-3 py-2 text-xs text-zinc-400">{device.platform ?? '-'}</td>
-      <td className="px-3 py-2">
-        <span className="rounded-full bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300">
-          {device.role}
-        </span>
-      </td>
-      <td className="px-3 py-2 text-xs text-zinc-400">
-        {device.scopes && device.scopes.length > 0 ? device.scopes.join(', ') : '-'}
-      </td>
-      <td className="px-3 py-2 text-xs text-zinc-500">
-        {device.lastSeen ? formatTimestamp(device.lastSeen) : '-'}
-      </td>
-      <td className="px-3 py-2">
-        <div className="flex gap-1">
-          {confirmAction === null ? (
-            <>
-              <button
-                onClick={() => setConfirmAction('rotate')}
-                className="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-400 hover:bg-amber-500/20"
-                type="button"
-              >
-                Rotate
-              </button>
-              <button
-                onClick={() => setConfirmAction('revoke')}
-                className="rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20"
-                type="button"
-              >
-                Revoke
-              </button>
-            </>
+    <div className="flex gap-1">
+      {confirmAction === null ? (
+        <>
+          <button
+            onClick={() => setConfirmAction('rotate')}
+            className="rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-400 hover:bg-amber-500/20"
+            type="button"
+          >
+            Rotate
+          </button>
+          <button
+            onClick={() => setConfirmAction('revoke')}
+            className="rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20"
+            type="button"
+          >
+            Revoke
+          </button>
+        </>
+      ) : (
+        <div className="text-xs">
+          {confirmAction === 'rotate' ? (
+            <ConfirmAction
+              message="Rotate token for this device? The old token will be invalidated."
+              onConfirm={handleRotate}
+              onCancel={() => setConfirmAction(null)}
+              variant="warning"
+            />
           ) : (
-            <div className="text-xs">
-              {confirmAction === 'rotate' ? (
-                <ConfirmAction
-                  message="Rotate token for this device? The old token will be invalidated."
-                  onConfirm={handleRotate}
-                  onCancel={() => setConfirmAction(null)}
-                  variant="warning"
-                />
-              ) : (
-                <ConfirmAction
-                  message="Revoke token for this device? It will need to re-pair."
-                  onConfirm={handleRevoke}
-                  onCancel={() => setConfirmAction(null)}
-                  variant="danger"
-                />
-              )}
-              {isProcessing && <span className="ml-2 text-zinc-400">Processing...</span>}
-            </div>
+            <ConfirmAction
+              message="Revoke token for this device? It will need to re-pair."
+              onConfirm={handleRevoke}
+              onCancel={() => setConfirmAction(null)}
+              variant="danger"
+            />
           )}
+          {isProcessing && <span className="ml-2 text-zinc-400">Processing...</span>}
         </div>
-      </td>
-    </tr>
+      )}
+    </div>
   );
 }
 
@@ -255,6 +231,49 @@ export function Devices() {
       unsubscribeFromEvents();
     };
   }, [status, load, subscribeToEvents, unsubscribeFromEvents]);
+
+  const pairedDeviceColumns = useMemo<ColumnDef<PairedDevice>[]>(
+    () => [
+      {
+        header: 'Device',
+        id: 'device',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <StatusDot status="online" />
+            <span className="text-sm text-zinc-100">
+              {row.original.displayName || row.original.deviceId.slice(0, 12) + '...'}
+            </span>
+          </div>
+        ),
+      },
+      {
+        header: 'Platform',
+        accessorFn: (row) => row.platform ?? '-',
+        cell: ({ getValue }) => <span className="text-xs text-zinc-400">{String(getValue())}</span>,
+      },
+      {
+        header: 'Role',
+        id: 'role',
+        cell: ({ row }) => <StatusPill status="active" label={row.original.role} />,
+      },
+      {
+        header: 'Scopes',
+        accessorFn: (row) => (row.scopes && row.scopes.length > 0 ? row.scopes.join(', ') : '-'),
+        cell: ({ getValue }) => <span className="text-xs text-zinc-400">{String(getValue())}</span>,
+      },
+      {
+        header: 'Last Seen',
+        accessorFn: (row) => (row.lastSeen ? formatTimestamp(row.lastSeen) : '-'),
+        cell: ({ getValue }) => <span className="text-xs text-zinc-500">{String(getValue())}</span>,
+      },
+      {
+        header: 'Actions',
+        id: 'actions',
+        cell: ({ row }) => <PairedDeviceActions device={row.original} />,
+      },
+    ],
+    []
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -323,25 +342,7 @@ export function Devices() {
                   detail="Approve a pairing request to add a device."
                 />
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-zinc-700 bg-zinc-800/50">
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Device</th>
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Platform</th>
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Role</th>
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Scopes</th>
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Last Seen</th>
-                        <th className="px-3 py-2 text-xs font-medium text-zinc-400">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pairedDevices.map((device) => (
-                        <PairedDeviceRow key={device.deviceId} device={device} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable columns={pairedDeviceColumns} data={pairedDevices} />
               )}
             </div>
           </div>

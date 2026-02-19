@@ -12,6 +12,18 @@ import {
 import { useConnectionStore } from '@/stores/connection';
 import { useAgentsStore, type Agent } from '@/stores/agents';
 import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
+import { GatewaySettings } from '@/components/organisms/GatewaySettings';
+import { DataTable } from '@/components/organisms/DataTable';
+import { StatusDot as StatusDotAtom } from '@/components/atoms/StatusDot';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import type { ColumnDef } from '@tanstack/react-table';
 
 // ---- Confirmation Dialog --------------------------------------------------
 
@@ -33,11 +45,13 @@ function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="mx-4 w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-900 p-4">
-        <h3 className="mb-2 text-lg font-semibold text-zinc-100">{title}</h3>
-        <p className="mb-4 text-sm text-zinc-400">{message}</p>
-        <div className="flex justify-end gap-2">
+    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{message}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
           <button
             onClick={onCancel}
             className="rounded-md bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600"
@@ -52,22 +66,10 @@ function ConfirmDialog({
           >
             {confirmLabel}
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
-}
-
-// ---- Status Dot -----------------------------------------------------------
-
-function StatusDot({ status }: { status: 'ok' | 'error' | 'pending' | 'unknown' }) {
-  const colors: Record<string, string> = {
-    ok: 'bg-emerald-500',
-    error: 'bg-red-500',
-    pending: 'bg-amber-500 animate-pulse',
-    unknown: 'bg-zinc-500',
-  };
-  return <div className={`h-2 w-2 rounded-full ${colors[status]}`} />;
 }
 
 // ---- Model Providers Section ----------------------------------------------
@@ -85,7 +87,18 @@ function ProviderRow({
 
   return (
     <div className="flex items-center gap-3 border-b border-zinc-700/50 px-3 py-2 last:border-0">
-      <StatusDot status={status} />
+      <StatusDotAtom
+        status={
+          status === 'ok'
+            ? 'online'
+            : status === 'error'
+              ? 'error'
+              : status === 'pending'
+                ? 'warning'
+                : 'offline'
+        }
+        pulse={status === 'pending'}
+      />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-zinc-100">{provider.name}</div>
         <div className="truncate font-mono text-xs text-zinc-500">{provider.baseUrl}</div>
@@ -222,6 +235,46 @@ function ModelRoutingSection({
   isOpen: boolean;
   onToggle: () => void;
 }) {
+  const columns = useMemo<ColumnDef<RoutingRow>[]>(
+    () => [
+      {
+        header: 'Demon',
+        accessorKey: 'agentName',
+      },
+      {
+        header: 'Primary Model',
+        accessorKey: 'primaryModel',
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-zinc-300">{row.original.primaryModel}</span>
+        ),
+      },
+      {
+        header: 'Fallbacks',
+        id: 'fallbacks',
+        accessorFn: (row) => row.fallbacks.join(', '),
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-zinc-500">
+            {row.original.fallbacks.length > 0 ? row.original.fallbacks.join(', ') : '-'}
+          </span>
+        ),
+      },
+      {
+        header: 'Provider',
+        accessorKey: 'provider',
+        cell: ({ row }) => <span className="text-xs text-zinc-400">{row.original.provider}</span>,
+      },
+      {
+        header: 'Cost Tier',
+        accessorKey: 'costTier',
+        cell: ({ row }) => {
+          const tierInfo = classifyModel(row.original.primaryModel);
+          return <span className={tierBadgeClasses(tierInfo.tier)}>{row.original.costTier}</span>;
+        },
+      },
+    ],
+    []
+  );
+
   return (
     <div className="rounded-lg border border-zinc-700 bg-zinc-900">
       <button
@@ -240,39 +293,7 @@ function ModelRoutingSection({
               No per-agent model routing found in config
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-zinc-700 bg-zinc-800/50">
-                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Demon</th>
-                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Primary Model</th>
-                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Fallbacks</th>
-                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Provider</th>
-                    <th className="px-3 py-2 text-xs font-medium text-zinc-400">Cost Tier</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {routing.map((r) => {
-                    const tierInfo = classifyModel(r.primaryModel);
-                    return (
-                      <tr key={r.agentId} className="border-b border-zinc-700/50 last:border-0">
-                        <td className="px-3 py-2 text-sm text-zinc-100">{r.agentName}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-zinc-300">
-                          {r.primaryModel}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-xs text-zinc-500">
-                          {r.fallbacks.length > 0 ? r.fallbacks.join(', ') : '-'}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-zinc-400">{r.provider}</td>
-                        <td className="px-3 py-2">
-                          <span className={tierBadgeClasses(tierInfo.tier)}>{r.costTier}</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable columns={columns} data={routing} />
           )}
         </div>
       )}
@@ -563,6 +584,10 @@ export function Config() {
 
         {/* Main Content Area */}
         <div className="flex flex-1 flex-col overflow-y-auto p-3">
+          <div className="mb-3">
+            <GatewaySettings />
+          </div>
+
           {/* Model Providers Section */}
           <div className="mb-3 space-y-3">
             <ModelProvidersSection

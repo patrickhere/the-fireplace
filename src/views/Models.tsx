@@ -7,7 +7,8 @@ import { useModelsStore, type ModelChoice } from '@/stores/models';
 import { useConnectionStore } from '@/stores/connection';
 import { useAgentsStore, type Agent } from '@/stores/agents';
 import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
-import { classifyModel, tierBadgeClasses } from '@/lib/modelTiers';
+import { classifyModel } from '@/lib/modelTiers';
+import { ModelBadge } from '@/components/atoms/ModelBadge';
 
 // ---- Derive demon model assignments from agents store --------------------
 
@@ -87,8 +88,7 @@ function ModelCard({
 }) {
   const [isSettling, setIsSettling] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
-  const tierInfo = classifyModel(`${model.provider}/${model.id}`);
-  const badgeClasses = tierBadgeClasses(tierInfo.tier);
+  const modelId = model.provider ? `${model.provider}/${model.id}` : model.id;
 
   const handleSet = async () => {
     setIsSettling(true);
@@ -123,7 +123,7 @@ function ModelCard({
 
           <div className="mb-2 flex items-center gap-2">
             <span className="text-xs text-zinc-500">{model.provider}</span>
-            <span className={badgeClasses}>{tierInfo.label}</span>
+            <ModelBadge model={modelId} />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -215,7 +215,7 @@ export function Models() {
   const tierCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const model of models) {
-      const tier = classifyModel(`${model.provider}/${model.id}`);
+      const tier = classifyModel(model.provider ? `${model.provider}/${model.id}` : model.id);
       counts[tier.label] = (counts[tier.label] || 0) + 1;
     }
     return counts;

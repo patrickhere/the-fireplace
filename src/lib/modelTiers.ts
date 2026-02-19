@@ -115,9 +115,9 @@ export function normalizeModelId(modelId: string): string {
 export function tierBadgeClasses(tier: ModelTier): string {
   const colors: Record<ModelTier, string> = {
     free: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    cheap: 'bg-sky-500/20 text-sky-400 border-sky-500/30',
+    cheap: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
     premium: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-    max: 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+    max: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/30',
     unknown: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30',
   };
   return `text-xs px-1.5 py-0.5 rounded border ${colors[tier]}`;

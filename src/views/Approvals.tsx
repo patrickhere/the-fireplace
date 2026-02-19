@@ -7,6 +7,15 @@ import { useApprovalsStore } from '@/stores/approvals';
 import { useConnectionStore } from '@/stores/connection';
 import { useAgentsStore } from '@/stores/agents';
 import { LoadingSpinner, ErrorState } from '@/components/StateIndicators';
+import { StatusPill } from '@/components/atoms/StatusPill';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
 import type {
   ExecApprovalRequest,
   ExecApprovalsFile,
@@ -72,21 +81,23 @@ function CliBackendCard({
   }, [request.receivedAt]);
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">{agentEmoji}</span>
-          <span className="text-sm font-medium text-zinc-200">{agentName}</span>
-          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-500">
-            {backendName}
-          </span>
+    <Card className="bg-zinc-800">
+      <CardContent className="p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-base">{agentEmoji}</span>
+            <span className="text-sm font-medium text-zinc-200">{agentName}</span>
+            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-500">
+              {backendName}
+            </span>
+          </div>
+          <span className="text-xs text-zinc-500">{elapsed}</span>
         </div>
-        <span className="text-xs text-zinc-500">{elapsed}</span>
-      </div>
-      <div className="rounded-md bg-zinc-900 p-2">
-        <code className="font-mono text-xs break-all text-zinc-300">{truncatedCommand}</code>
-      </div>
-    </div>
+        <div className="rounded-md bg-zinc-900 p-2">
+          <code className="font-mono text-xs break-all text-zinc-300">{truncatedCommand}</code>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -118,87 +129,84 @@ function ApprovalCard({
   const hasTimeout = request.timeoutMs !== undefined && request.timeoutMs > 0;
 
   return (
-    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-      <div className="mb-2 flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-            <span className="text-xs text-amber-400">
-              {formatTimeAgo(request.receivedAt)}
+    <Card className="border-amber-500/30 bg-amber-500/5">
+      <CardContent className="p-3">
+        <div className="mb-2 flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <StatusPill status="warning" label={formatTimeAgo(request.receivedAt)} />
               {hasTimeout && (
-                <span className="ml-2 text-zinc-500">
+                <span className="ml-2 text-xs text-zinc-500">
                   timeout: {Math.round((request.timeoutMs ?? 0) / 1000)}s
                 </span>
               )}
-            </span>
+            </div>
+            {request.agentId && (
+              <span className="mt-1 inline-block rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+                agent: {request.agentId}
+              </span>
+            )}
           </div>
-          {request.agentId && (
-            <span className="mt-1 inline-block rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
-              agent: {request.agentId}
+        </div>
+
+        {/* Command */}
+        <div className="mb-2 rounded-md bg-zinc-900 p-2">
+          <code className="font-mono text-sm break-all text-zinc-100">{request.command}</code>
+        </div>
+
+        {/* Metadata */}
+        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+          {request.cwd && (
+            <span>
+              <span className="text-zinc-600">cwd:</span> {request.cwd}
+            </span>
+          )}
+          {request.host && (
+            <span>
+              <span className="text-zinc-600">host:</span> {request.host}
+            </span>
+          )}
+          {request.security && (
+            <span>
+              <span className="text-zinc-600">security:</span>{' '}
+              <StatusPill status={request.security} />
+            </span>
+          )}
+          {request.sessionKey && (
+            <span>
+              <span className="text-zinc-600">session:</span> {request.sessionKey}
             </span>
           )}
         </div>
-      </div>
 
-      {/* Command */}
-      <div className="mb-2 rounded-md bg-zinc-900 p-2">
-        <code className="font-mono text-sm break-all text-zinc-100">{request.command}</code>
-      </div>
+        {/* Ask reason */}
+        {request.ask && (
+          <div className="mb-3 rounded-md bg-zinc-800/50 p-2 text-xs text-zinc-400">
+            {request.ask}
+          </div>
+        )}
 
-      {/* Metadata */}
-      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
-        {request.cwd && (
-          <span>
-            <span className="text-zinc-600">cwd:</span> {request.cwd}
-          </span>
-        )}
-        {request.host && (
-          <span>
-            <span className="text-zinc-600">host:</span> {request.host}
-          </span>
-        )}
-        {request.security && (
-          <span>
-            <span className="text-zinc-600">security:</span>{' '}
-            <span className={request.security === 'high' ? 'text-red-400' : ''}>
-              {request.security}
-            </span>
-          </span>
-        )}
-        {request.sessionKey && (
-          <span>
-            <span className="text-zinc-600">session:</span> {request.sessionKey}
-          </span>
-        )}
-      </div>
-
-      {/* Ask reason */}
-      {request.ask && (
-        <div className="mb-3 rounded-md bg-zinc-800/50 p-2 text-xs text-zinc-400">
-          {request.ask}
+        {/* Action Buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleApprove}
+            disabled={isResolving || !request.id}
+            className="flex-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+            type="button"
+          >
+            Approve
+          </button>
+          <button
+            onClick={handleDeny}
+            disabled={isResolving || !request.id}
+            className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+            type="button"
+          >
+            Reject
+          </button>
         </div>
-      )}
-
-      {/* Action Buttons */}
-      <div className="flex gap-2">
-        <button
-          onClick={handleApprove}
-          disabled={isResolving || !request.id}
-          className="flex-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-          type="button"
-        >
-          Approve
-        </button>
-        <button
-          onClick={handleDeny}
-          disabled={isResolving || !request.id}
-          className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
-          type="button"
-        >
-          Reject
-        </button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -291,16 +299,22 @@ function ConfigSection({
       <div className="grid gap-3 lg:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs text-zinc-500">Security Level</label>
-          <select
-            value={config.security ?? ''}
-            onChange={(e) => onUpdate({ ...config, security: e.target.value || undefined })}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+          <Select
+            value={config.security ?? '__default__'}
+            onValueChange={(value) =>
+              onUpdate({ ...config, security: value === '__default__' ? undefined : value })
+            }
           >
-            <option value="">Default</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__default__">Default</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div>

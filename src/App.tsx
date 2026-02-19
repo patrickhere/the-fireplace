@@ -8,6 +8,7 @@ import { MobileNav } from '@/components/MobileNav';
 import { CommandPalette } from '@/components/CommandPalette';
 import { GlobalShortcuts } from '@/components/GlobalShortcuts';
 import { UpdateBanner } from '@/components/UpdateBanner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 // Views
 import { Chat } from '@/views/Chat';
@@ -29,7 +30,7 @@ import { DemonKanban } from '@/views/DemonKanban';
 
 function App() {
   const isMobile = useIsMobile();
-  const { connect, status } = useConnectionStore();
+  const { connect, status, initGatewayUrl } = useConnectionStore();
   const connectAttempted = useRef(false);
 
   // Auto-connect on app startup — use a ref to prevent double-invocation
@@ -37,61 +38,66 @@ function App() {
   useEffect(() => {
     if (!connectAttempted.current && status === 'disconnected') {
       connectAttempted.current = true;
-      connect().catch((err) => {
+      void (async () => {
+        await initGatewayUrl();
+        await connect();
+      })().catch((err) => {
         console.error('[App] Auto-connect failed:', err);
       });
     }
-  }, [status, connect]);
+  }, [status, connect, initGatewayUrl]);
 
   return (
     <BrowserRouter>
-      {/* Toast notifications */}
-      <Toaster theme="dark" richColors position="bottom-right" />
+      <TooltipProvider>
+        {/* Toast notifications */}
+        <Toaster theme="dark" richColors position="bottom-right" />
 
-      {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
-      <GlobalShortcuts />
+        {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
+        <GlobalShortcuts />
 
-      {/* Command palette overlay (Cmd+K) */}
-      <CommandPalette />
+        {/* Command palette overlay (Cmd+K) */}
+        <CommandPalette />
 
-      <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
-        {/* Update banner — macOS only, shows when update available */}
-        <UpdateBanner />
+        <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
+          {/* Update banner — macOS only, shows when update available */}
+          <UpdateBanner />
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* Desktop: Sidebar */}
-          {!isMobile && <Sidebar />}
+          <div className="flex flex-1 overflow-hidden">
+            {/* Desktop: Sidebar */}
+            {!isMobile && <Sidebar />}
 
-          {/* Main content area */}
-          <main
-            className="flex-1 overflow-auto pb-0 md:pb-0"
-            style={{ paddingBottom: isMobile ? '56px' : 0 }}
-          >
-            <Routes>
-              <Route path="/" element={<Chat />} />
-              <Route path="/sessions" element={<Sessions />} />
-              <Route path="/channels" element={<Channels />} />
-              <Route path="/agents" element={<Agents />} />
-              <Route path="/config" element={<Config />} />
-              <Route path="/approvals" element={<Approvals />} />
-              <Route path="/cron" element={<Cron />} />
-              <Route path="/skills" element={<Skills />} />
-              <Route path="/devices" element={<Devices />} />
-              <Route path="/logs" element={<Logs />} />
-              <Route path="/models" element={<Models />} />
-              <Route path="/usage" element={<Usage />} />
-              <Route path="/more" element={<More />} />
-              <Route path="/demon-chat" element={<DemonChatRoom />} />
-              <Route path="/demon-health" element={<DemonHealth />} />
-              <Route path="/demon-tasks" element={<DemonKanban />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
+            {/* Main content area */}
+            <main
+              className="flex-1 overflow-auto pb-0 md:pb-0"
+              style={{ paddingBottom: isMobile ? '56px' : 0 }}
+            >
+              <Routes>
+                <Route path="/" element={<Chat />} />
+                <Route path="/sessions" element={<Sessions />} />
+                <Route path="/channels" element={<Channels />} />
+                <Route path="/agents" element={<Agents />} />
+                <Route path="/config" element={<Config />} />
+                <Route path="/approvals" element={<Approvals />} />
+                <Route path="/cron" element={<Cron />} />
+                <Route path="/skills" element={<Skills />} />
+                <Route path="/devices" element={<Devices />} />
+                <Route path="/logs" element={<Logs />} />
+                <Route path="/models" element={<Models />} />
+                <Route path="/usage" element={<Usage />} />
+                <Route path="/more" element={<More />} />
+                <Route path="/demon-chat" element={<DemonChatRoom />} />
+                <Route path="/demon-health" element={<DemonHealth />} />
+                <Route path="/demon-tasks" element={<DemonKanban />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </main>
 
-          {/* Mobile: Bottom Navigation */}
-          {isMobile && <MobileNav />}
+            {/* Mobile: Bottom Navigation */}
+            {isMobile && <MobileNav />}
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
     </BrowserRouter>
   );
 }

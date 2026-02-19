@@ -149,7 +149,10 @@ export const useLogsStore = create<LogsState>((set, get) => ({
     try {
       set({ isDebugLoading: true, lastDebugResult: null });
 
-      const payload = await request<unknown>(method, params ?? undefined);
+      const payload = await request<unknown>(
+        method as Parameters<typeof request>[0],
+        params ?? undefined
+      );
       const durationMs = Date.now() - startMs;
 
       set({

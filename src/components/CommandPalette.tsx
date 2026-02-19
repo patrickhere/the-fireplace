@@ -16,6 +16,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useKeyboardShortcut, formatShortcut } from '@/hooks/useKeyboard';
 import { useConnectionStore } from '@/stores/connection';
 
@@ -193,21 +194,8 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-    >
-      {/* Backdrop */}
-      <div
-        role="presentation"
-        className="fixed inset-0 bg-black/60"
-        onClick={() => setOpen(false)}
-      />
-
-      {/* Palette */}
-      <div className="relative w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/50">
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="top-[20vh] max-w-lg translate-y-0 rounded-xl border-zinc-700 bg-zinc-900 p-0 shadow-2xl shadow-black/50">
         <Command
           filter={(value, search) => {
             // Custom fuzzy-ish filter: check if all search chars appear in order
@@ -288,7 +276,7 @@ export function CommandPalette() {
             <span className="text-xs text-zinc-600">{formatShortcut('cmd+k')} to toggle</span>
           </div>
         </Command>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

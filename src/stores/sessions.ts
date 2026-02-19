@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Unsubscribe } from '@/gateway/types';
+import { optimisticMutation } from '@/lib/optimistic';
 
 // ---- Session Types --------------------------------------------------------
 
@@ -260,25 +261,24 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     const { useConnectionStore } = await import('./connection');
     const { request } = useConnectionStore.getState();
 
-    // Optimistic remove
-    const previous = get().sessions;
-    set((state) => ({ sessions: state.sessions.filter((s) => s.key !== key) }));
-
     try {
       set({ error: null });
 
-      await request('sessions.delete', {
-        key,
-        deleteTranscript,
+      await optimisticMutation(get, (partial) => set(partial), {
+        snapshot: (state) => ({ sessions: state.sessions }),
+        apply: (state) => ({ sessions: state.sessions.filter((s) => s.key !== key) }),
+        execute: () =>
+          request('sessions.delete', {
+            key,
+            deleteTranscript,
+          }),
+        errorMessage: 'Failed to delete session',
       });
 
       toast.success('Session deleted');
     } catch (err) {
-      // Rollback on failure
-      set({ sessions: previous });
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete session';
       set({ error: errorMessage });
-      toast.error(errorMessage);
       console.error('[Sessions] Failed to delete session:', err);
     }
   },

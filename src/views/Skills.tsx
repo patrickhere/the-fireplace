@@ -6,6 +6,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useSkillsStore, type SkillStatus } from '@/stores/skills';
 import { useConnectionStore } from '@/stores/connection';
 import { LoadingSpinner, EmptyState, ErrorState } from '@/components/StateIndicators';
+import { StatusPill } from '@/components/atoms/StatusPill';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 // ---- Environment Variable Editor ------------------------------------------
 
@@ -155,56 +157,55 @@ function SkillCard({ skill }: { skill: SkillStatus }) {
   };
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-3">
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-sm font-medium text-zinc-100">{skill.name}</span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-xs ${
-                skill.enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-700 text-zinc-400'
-              }`}
-            >
-              {skill.enabled ? 'Enabled' : 'Disabled'}
-            </span>
+    <Card className="bg-zinc-800">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-sm font-medium text-zinc-100">{skill.name}</span>
+              <StatusPill
+                status={skill.enabled ? 'active' : 'idle'}
+                label={skill.enabled ? 'Enabled' : 'Disabled'}
+              />
+            </div>
+            <div className="text-xs text-zinc-500">Key: {skill.key}</div>
+            {skill.version && <div className="text-xs text-zinc-500">Version: {skill.version}</div>}
+            {skill.description && (
+              <div className="mt-1 text-xs text-zinc-400">{skill.description}</div>
+            )}
+            {skill.error && <div className="mt-1 text-xs text-red-400">{skill.error}</div>}
           </div>
-          <div className="text-xs text-zinc-500">Key: {skill.key}</div>
-          {skill.version && <div className="text-xs text-zinc-500">Version: {skill.version}</div>}
-          {skill.description && (
-            <div className="mt-1 text-xs text-zinc-400">{skill.description}</div>
-          )}
-          {skill.error && <div className="mt-1 text-xs text-red-400">{skill.error}</div>}
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600"
+              type="button"
+            >
+              {expanded ? 'Collapse' : 'Config'}
+            </button>
+            <button
+              onClick={handleToggle}
+              disabled={isToggling}
+              className={`rounded-md px-3 py-1 text-xs font-medium disabled:opacity-50 ${
+                skill.enabled
+                  ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                  : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'
+              }`}
+              type="button"
+            >
+              {isToggling ? '...' : skill.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600"
-            type="button"
-          >
-            {expanded ? 'Collapse' : 'Config'}
-          </button>
-          <button
-            onClick={handleToggle}
-            disabled={isToggling}
-            className={`rounded-md px-3 py-1 text-xs font-medium disabled:opacity-50 ${
-              skill.enabled
-                ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
-                : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'
-            }`}
-            type="button"
-          >
-            {isToggling ? '...' : skill.enabled ? 'Disable' : 'Enable'}
-          </button>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="mt-3 border-t border-zinc-700 pt-3">
-          <EnvEditor env={skill.env ?? {}} onSave={handleEnvSave} />
-        </div>
-      )}
-    </div>
+        {expanded && (
+          <div className="mt-3 border-t border-zinc-700 pt-3">
+            <EnvEditor env={skill.env ?? {}} onSave={handleEnvSave} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -226,10 +227,11 @@ function InstallPanel() {
   };
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3">
-      <h3 className="mb-3 text-sm font-medium text-zinc-100">Install Skill</h3>
-
-      <div className="space-y-2">
+    <Card>
+      <CardHeader>
+        <CardTitle>Install Skill</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -263,12 +265,11 @@ function InstallPanel() {
             {isInstalling ? 'Installing...' : 'Install'}
           </button>
         </div>
-
         {bins.length > 0 && (
           <div className="text-xs text-zinc-500">Available bins: {bins.join(', ')}</div>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
