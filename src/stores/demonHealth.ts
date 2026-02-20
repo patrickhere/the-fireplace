@@ -10,6 +10,12 @@ import type { ChatEventPayload } from '@/stores/chat';
 
 // ---- Types ----------------------------------------------------------------
 
+export interface DemonActivityEntry {
+  type: 'success' | 'error' | 'start';
+  timestamp: number;
+  model?: string;
+}
+
 export interface DemonStatus {
   demonId: string;
   demonName: string;
@@ -25,6 +31,11 @@ export interface DemonStatus {
     tool: 'claude-code' | 'codex' | null;
     startedAt: number | null;
   };
+  // Metrics (B1)
+  errorCount: number;
+  successCount: number;
+  totalTokens: number;
+  recentActivity: DemonActivityEntry[];
 }
 
 // ---- Health Event Payload -------------------------------------------------
@@ -71,6 +82,8 @@ const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 // ---- Helpers --------------------------------------------------------------
 
+const MAX_RECENT_ACTIVITY = 20;
+
 function buildDemonFromAgent(agent: Agent): DemonStatus {
   return {
     demonId: agent.id,
@@ -83,6 +96,10 @@ function buildDemonFromAgent(agent: Agent): DemonStatus {
     lastActivity: 0,
     uptime: Date.now(),
     cliBackend: { active: false, tool: null, startedAt: null },
+    errorCount: 0,
+    successCount: 0,
+    totalTokens: 0,
+    recentActivity: [],
   };
 }
 
@@ -154,19 +171,45 @@ export const useDemonHealthStore = create<DemonHealthState>((set, get) => ({
 
           let state: DemonStatus['state'] = 'working';
           let currentTask = prev.currentTask;
+          let successInc = 0;
+          let errorInc = 0;
+          let activityEntry: DemonActivityEntry | null = null;
+          const payloadAny = payload as unknown as Record<string, unknown>;
+          const tokenInc = payloadAny.tokens ? Number(payloadAny.tokens) : 0;
 
           if (payload.done) {
             state = 'idle';
             currentTask = null;
+            successInc = 1;
+            activityEntry = { type: 'success', timestamp: Date.now(), model: prev.activeModel };
+          } else if (payloadAny.error) {
+            state = 'error';
+            errorInc = 1;
+            activityEntry = { type: 'error', timestamp: Date.now(), model: prev.activeModel };
           } else if (payload.delta) {
-            // First delta of a new message = working
             state = 'working';
+            if (prev.state !== 'working') {
+              activityEntry = { type: 'start', timestamp: Date.now(), model: prev.activeModel };
+            }
           }
 
           set({
-            demons: demons.map((d) =>
-              d.demonId === agentId ? { ...d, lastActivity: Date.now(), state, currentTask } : d
-            ),
+            demons: demons.map((d) => {
+              if (d.demonId !== agentId) return d;
+              const recentActivity = activityEntry
+                ? [activityEntry, ...d.recentActivity].slice(0, MAX_RECENT_ACTIVITY)
+                : d.recentActivity;
+              return {
+                ...d,
+                lastActivity: Date.now(),
+                state,
+                currentTask,
+                successCount: d.successCount + successInc,
+                errorCount: d.errorCount + errorInc,
+                totalTokens: d.totalTokens + tokenInc,
+                recentActivity,
+              };
+            }),
           });
         });
 

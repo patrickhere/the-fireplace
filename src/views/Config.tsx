@@ -23,6 +23,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
 
 // ---- Confirmation Dialog --------------------------------------------------
@@ -487,6 +490,43 @@ export function Config() {
     }
   }, [rawConfig]);
 
+  const handleExportConfig = useCallback(async () => {
+    try {
+      const filePath = await saveDialog({
+        title: 'Export Config',
+        defaultPath: 'openclaw-config.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!filePath) return;
+      await writeTextFile(filePath, editorValue);
+      toast.success('Config exported');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Export failed';
+      toast.error(msg);
+    }
+  }, [editorValue]);
+
+  const handleImportConfig = useCallback(async () => {
+    try {
+      const filePath = await openDialog({
+        title: 'Import Config',
+        multiple: false,
+        directory: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!filePath) return;
+      const content = await readTextFile(filePath);
+      // Validate JSON before applying
+      JSON.parse(content);
+      setEditorValue(content);
+      setHasUnsavedChanges(true);
+      toast.success('Config imported — review and save to apply');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Import failed';
+      toast.error(msg);
+    }
+  }, []);
+
   const providers = parsedProviders();
   const routing = useMemo(() => parseAgentRouting(rawConfig, agents), [rawConfig, agents]);
   const hasHints = Object.keys(uiHints).length > 0;
@@ -531,6 +571,22 @@ export function Config() {
               Revert
             </button>
           )}
+
+          <button
+            onClick={handleImportConfig}
+            className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-600"
+            type="button"
+          >
+            Import
+          </button>
+
+          <button
+            onClick={handleExportConfig}
+            className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-600"
+            type="button"
+          >
+            Export
+          </button>
 
           <button
             onClick={() => loadConfig(true)}

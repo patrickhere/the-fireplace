@@ -8,7 +8,10 @@ import { MobileNav } from '@/components/MobileNav';
 import { CommandPalette } from '@/components/CommandPalette';
 import { GlobalShortcuts } from '@/components/GlobalShortcuts';
 import { UpdateBanner } from '@/components/UpdateBanner';
+import { ApprovalNotifier } from '@/components/ApprovalNotifier';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useTraySync } from '@/hooks/useTraySync';
+import { useGlobalShortcut } from '@/hooks/useGlobalShortcut';
 
 // Views
 import { Chat } from '@/views/Chat';
@@ -27,11 +30,15 @@ import { More } from '@/views/More';
 import { DemonChatRoom } from '@/views/DemonChatRoom';
 import { DemonHealth } from '@/views/DemonHealth';
 import { DemonKanban } from '@/views/DemonKanban';
+import { DemonObservability } from '@/views/DemonObservability';
+import { DemonMemory } from '@/views/DemonMemory';
 
 function App() {
   const isMobile = useIsMobile();
   const { connect, status, initGatewayUrl } = useConnectionStore();
   const connectAttempted = useRef(false);
+  useTraySync();
+  useGlobalShortcut();
 
   // Auto-connect on app startup — use a ref to prevent double-invocation
   // while still correctly reading status from state
@@ -58,6 +65,9 @@ function App() {
 
         {/* Command palette overlay (Cmd+K) */}
         <CommandPalette />
+
+        {/* Native notifications for approval requests */}
+        <ApprovalNotifier />
 
         <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
           {/* Update banner — macOS only, shows when update available */}
@@ -89,6 +99,8 @@ function App() {
                 <Route path="/demon-chat" element={<DemonChatRoom />} />
                 <Route path="/demon-health" element={<DemonHealth />} />
                 <Route path="/demon-tasks" element={<DemonKanban />} />
+                <Route path="/demon-observability" element={<DemonObservability />} />
+                <Route path="/demon-memory" element={<DemonMemory />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </main>

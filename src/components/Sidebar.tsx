@@ -2,6 +2,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { ConnectionStatus } from './ConnectionStatus';
 import { formatShortcut } from '@/hooks/useKeyboard';
+import { useApprovalsStore } from '@/stores/approvals';
+import { useDemonTasksStore } from '@/stores/demonTasks';
 
 interface NavItem {
   label: string;
@@ -30,10 +32,31 @@ const demonNavItems: NavItem[] = [
   { label: 'Chat Room', path: '/demon-chat', icon: '🔥' },
   { label: 'Health', path: '/demon-health', icon: '♥' },
   { label: 'Tasks', path: '/demon-tasks', icon: '☐' },
+  { label: 'Observability', path: '/demon-observability', icon: '◎' },
+  { label: 'Memory', path: '/demon-memory', icon: '◇' },
 ];
 
 export function Sidebar() {
   const location = useLocation();
+  const pendingCount = useApprovalsStore((s) => s.pendingRequests.length);
+  const inProgressCount = useDemonTasksStore(
+    (s) => s.tasks.filter((t) => t.status === 'in_progress').length
+  );
+
+  // Inject live badge counts into nav items
+  const navItemsWithBadges = navItems.map((item) => {
+    if (item.path === '/approvals' && pendingCount > 0) {
+      return { ...item, badge: pendingCount };
+    }
+    return item;
+  });
+
+  const demonNavItemsWithBadges = demonNavItems.map((item) => {
+    if (item.path === '/demon-tasks' && inProgressCount > 0) {
+      return { ...item, badge: inProgressCount };
+    }
+    return item;
+  });
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-zinc-700 bg-zinc-900">
@@ -51,7 +74,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {navItems.map((item) => {
+          {navItemsWithBadges.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <li key={item.path}>
@@ -92,7 +115,7 @@ export function Sidebar() {
           Demons
         </div>
         <ul className="space-y-1">
-          {demonNavItems.map((item) => {
+          {demonNavItemsWithBadges.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <li key={item.path}>
@@ -112,6 +135,11 @@ export function Sidebar() {
                     </span>
                     <span>{item.label}</span>
                   </div>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-400">
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               </li>
             );

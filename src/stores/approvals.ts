@@ -84,12 +84,27 @@ interface ExecApprovalResolvedPayload {
   resolvedAt?: number;
 }
 
+// ---- Resolved History Entry -----------------------------------------------
+
+export interface ResolvedApprovalEntry {
+  id: string;
+  command: string;
+  agentId?: string;
+  decision: 'approve' | 'deny';
+  resolvedBy?: string;
+  resolvedAt: number;
+  receivedAt: number;
+}
+
+const MAX_RESOLVED_HISTORY = 200;
+
 // ---- Store Types ----------------------------------------------------------
 
 interface ApprovalsState {
   // Data
   snapshot: ExecApprovalsSnapshot | null;
   pendingRequests: ExecApprovalRequest[];
+  resolvedHistory: ResolvedApprovalEntry[];
 
   // UI State
   isLoading: boolean;
@@ -115,6 +130,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
   // Initial state
   snapshot: null,
   pendingRequests: [],
+  resolvedHistory: [],
   isLoading: false,
   error: null,
   eventUnsubscribe: null,
@@ -175,6 +191,24 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
       await request('exec.approval.resolve', { id, decision });
 
       toast.success(decision === 'approve' ? 'Approved' : 'Rejected');
+
+      // Move to resolved history before removing from pending
+      const pending = get().pendingRequests.find((r) => r.id === id);
+      if (pending) {
+        const entry: ResolvedApprovalEntry = {
+          id,
+          command: pending.command,
+          agentId: pending.agentId,
+          decision,
+          resolvedBy: 'local',
+          resolvedAt: Date.now(),
+          receivedAt: pending.receivedAt,
+        };
+        set((state) => ({
+          resolvedHistory: [entry, ...state.resolvedHistory].slice(0, MAX_RESOLVED_HISTORY),
+        }));
+      }
+
       // Remove from pending
       get().removePendingRequest(id);
     } catch (err) {
@@ -223,6 +257,24 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
             return;
           }
           console.log('[Approvals] Approval resolved by remote:', payload);
+
+          // Move to resolved history
+          const pending = get().pendingRequests.find((r) => r.id === payload.id);
+          if (pending && payload.decision) {
+            const entry: ResolvedApprovalEntry = {
+              id: payload.id,
+              command: pending.command,
+              agentId: pending.agentId,
+              decision: payload.decision,
+              resolvedBy: payload.resolvedBy ?? 'remote',
+              resolvedAt: payload.resolvedAt ?? Date.now(),
+              receivedAt: pending.receivedAt,
+            };
+            set((state) => ({
+              resolvedHistory: [entry, ...state.resolvedHistory].slice(0, MAX_RESOLVED_HISTORY),
+            }));
+          }
+
           get().removePendingRequest(payload.id);
         }
       );
@@ -250,6 +302,7 @@ export const useApprovalsStore = create<ApprovalsState>((set, get) => ({
     set({
       snapshot: null,
       pendingRequests: [],
+      resolvedHistory: [],
       isLoading: false,
       error: null,
       eventUnsubscribe: null,

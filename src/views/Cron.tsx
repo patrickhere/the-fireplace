@@ -58,6 +58,86 @@ const CRON_TEMPLATES: CronTemplate[] = [
   },
 ];
 
+const DEMON_PULSE_TEMPLATES: CronTemplate[] = [
+  {
+    label: 'Calcifer Pulse',
+    name: 'calcifer-pulse',
+    agentId: 'calcifer',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for pending delegations and status updates. Review active tasks across all demons. Take action on anything that needs coordination. Update your daily memory file with a summary.',
+    description: 'Orchestrator heartbeat — coordinate demons, delegate tasks',
+  },
+  {
+    label: 'Buer Pulse',
+    name: 'buer-pulse',
+    agentId: 'buer',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for assigned tasks and code review requests. Take action on the highest-priority item. Report findings. Update your daily memory file with a summary.',
+    description: 'Architecture demon — code reviews and audits',
+  },
+  {
+    label: 'Paimon Pulse',
+    name: 'paimon-pulse',
+    agentId: 'paimon',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for research requests and documentation tasks. Synthesize any pending findings. Update your daily memory file with a summary.',
+    description: 'Research demon — knowledge synthesis and docs',
+  },
+  {
+    label: 'Alloces Pulse',
+    name: 'alloces-pulse',
+    agentId: 'alloces',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for planning tasks and resource allocation requests. Evaluate session sizes and cost efficiency. Update your daily memory file with a summary.',
+    description: 'Strategy demon — planning and resource allocation',
+  },
+  {
+    label: 'Dantalion Pulse',
+    name: 'dantalion-pulse',
+    agentId: 'dantalion',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for intent parsing and NLU tasks. Process any queued analysis requests. Update your daily memory file with a summary.',
+    description: 'Intent demon — NLU and context inference',
+  },
+  {
+    label: 'Andromalius Pulse',
+    name: 'andromalius-pulse',
+    agentId: 'andromalius',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for security concerns and audit requests. Review recent access logs and anomalies. Update your daily memory file with a summary.',
+    description: 'Security demon — threat monitoring and audits',
+  },
+  {
+    label: 'Malphas Pulse',
+    name: 'malphas-pulse',
+    agentId: 'malphas',
+    scheduleKind: 'every',
+    scheduleValue: '5m',
+    payloadKind: 'agentTurn',
+    payloadMessage:
+      'Check your context for code generation and scaffolding tasks. Implement the highest-priority assigned task. Update your daily memory file with a summary.',
+    description: 'Builder demon — code generation and scaffolding',
+  },
+];
+
 export function Cron() {
   const { jobs, isLoading, error, loadJobs, addJob } = useCronStore();
   const { agents, loadAgents } = useAgentsStore();
@@ -207,7 +287,10 @@ export function Cron() {
             Demon Tasks
           </button>
 
-          <CronQuickCreateDropdown templates={CRON_TEMPLATES} onSelect={handleQuickCreate} />
+          <CronQuickCreateDropdown
+            templates={[...CRON_TEMPLATES, ...DEMON_PULSE_TEMPLATES]}
+            onSelect={handleQuickCreate}
+          />
 
           <button
             onClick={() => loadJobs()}

@@ -12,6 +12,10 @@ interface NotificationOptions {
   title: string;
   body: string;
   urgency?: NotificationUrgency;
+  /** Action type ID to attach action buttons (e.g. Approve/Deny). */
+  actionTypeId?: string;
+  /** Extra key-value payload stored with the notification. */
+  extra?: Record<string, string>;
 }
 
 interface UseNotificationsReturn {
@@ -22,6 +26,8 @@ interface UseNotificationsReturn {
   /** Send a native notification */
   notify: (options: NotificationOptions) => Promise<void>;
 }
+
+export type { NotificationOptions };
 
 export function useNotifications(): UseNotificationsReturn {
   const [permitted, setPermitted] = useState(false);
@@ -64,13 +70,25 @@ export function useNotifications(): UseNotificationsReturn {
         return;
       }
       try {
-        // Use Tauri command for richer control
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('send_notification', {
-          title: options.title,
-          body: options.body,
-          urgency: options.urgency ?? 'normal',
-        });
+        if (options.actionTypeId) {
+          // Use the plugin's sendNotification for action-enabled notifications
+          const { sendNotification } = await import('@tauri-apps/plugin-notification');
+          sendNotification({
+            title: options.title,
+            body: options.body,
+            actionTypeId: options.actionTypeId,
+            sound: options.urgency === 'critical' ? 'default' : undefined,
+            extra: options.extra,
+          });
+        } else {
+          // Use Tauri command for basic notifications
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('send_notification', {
+            title: options.title,
+            body: options.body,
+            urgency: options.urgency ?? 'normal',
+          });
+        }
       } catch (err) {
         console.warn('[Notifications] Failed to send notification:', err);
       }

@@ -152,6 +152,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_platform,
@@ -163,6 +166,8 @@ pub fn run() {
             sign_payload,
             get_device_public_key,
             get_device_id,
+            #[cfg(target_os = "macos")]
+            tray::update_tray_status,
         ])
         .setup(|app| {
             // System tray — macOS only

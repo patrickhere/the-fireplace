@@ -431,6 +431,7 @@ export function Approvals() {
   const {
     snapshot,
     pendingRequests,
+    resolvedHistory,
     isLoading,
     error,
     loadApprovals,
@@ -511,6 +512,7 @@ export function Approvals() {
     [localFile]
   );
 
+  const [showHistory, setShowHistory] = useState(false);
   const [newAgentId, setNewAgentId] = useState('');
 
   const handleAddAgent = useCallback(() => {
@@ -690,6 +692,58 @@ export function Approvals() {
                 </div>
               )}
             </section>
+
+            {/* Recent Approvals (Audit Trail) */}
+            {resolvedHistory.length > 0 && (
+              <section>
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wider text-zinc-500 uppercase hover:text-zinc-400"
+                  type="button"
+                >
+                  <span className="text-xs">{showHistory ? '▼' : '▶'}</span>
+                  Recent Approvals ({resolvedHistory.length})
+                </button>
+                {showHistory && (
+                  <div className="space-y-1">
+                    {resolvedHistory.map((entry) => {
+                      const { name: agentName, emoji: agentEmoji } = getAgentInfo(entry.agentId);
+                      const truncCmd =
+                        entry.command.length > 80
+                          ? entry.command.slice(0, 80) + '...'
+                          : entry.command;
+                      return (
+                        <div
+                          key={`${entry.id}-${entry.resolvedAt}`}
+                          className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900/50 px-3 py-2"
+                        >
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                              entry.decision === 'approve'
+                                ? 'bg-emerald-500/15 text-emerald-400'
+                                : 'bg-red-500/15 text-red-400'
+                            }`}
+                          >
+                            {entry.decision === 'approve' ? 'Approved' : 'Denied'}
+                          </span>
+                          <span className="text-sm">{agentEmoji}</span>
+                          <span className="text-xs text-zinc-400">{agentName}</span>
+                          <code className="flex-1 truncate font-mono text-xs text-zinc-500">
+                            {truncCmd}
+                          </code>
+                          <span className="text-xs text-zinc-600">
+                            {formatTimeAgo(entry.resolvedAt)}
+                          </span>
+                          {entry.resolvedBy && entry.resolvedBy !== 'local' && (
+                            <span className="text-xs text-zinc-600">by {entry.resolvedBy}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* Configuration Section */}
             <section>
