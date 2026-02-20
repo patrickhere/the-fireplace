@@ -33,7 +33,7 @@ import { DemonKanban } from '@/views/DemonKanban';
 import { DemonObservability } from '@/views/DemonObservability';
 import { DemonMemory } from '@/views/DemonMemory';
 
-function App() {
+function AppShell() {
   const isMobile = useIsMobile();
   const { connect, status, initGatewayUrl } = useConnectionStore();
   const connectAttempted = useRef(false);
@@ -55,61 +55,67 @@ function App() {
   }, [status, connect, initGatewayUrl]);
 
   return (
-    <BrowserRouter>
-      <TooltipProvider>
-        {/* Toast notifications */}
-        <Toaster theme="dark" richColors position="bottom-right" />
+    <TooltipProvider>
+      {/* Toast notifications */}
+      <Toaster theme="dark" richColors position="bottom-right" />
 
-        {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
-        <GlobalShortcuts />
+      {/* Global keyboard shortcuts (Cmd+1-9, Cmd+N) */}
+      <GlobalShortcuts />
 
-        {/* Command palette overlay (Cmd+K) */}
-        <CommandPalette />
+      {/* Command palette overlay (Cmd+K) */}
+      <CommandPalette />
 
-        {/* Native notifications for approval requests */}
-        <ApprovalNotifier />
+      {/* Native notifications for approval requests */}
+      <ApprovalNotifier />
 
-        <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
-          {/* Update banner — macOS only, shows when update available */}
-          <UpdateBanner />
+      <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
+        {/* Update banner — macOS only, shows when update available */}
+        <UpdateBanner />
 
-          <div className="flex flex-1 overflow-hidden">
-            {/* Desktop: Sidebar */}
-            {!isMobile && <Sidebar />}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Desktop: Sidebar */}
+          {!isMobile && <Sidebar />}
 
-            {/* Main content area */}
-            <main
-              className="flex-1 overflow-auto pb-0 md:pb-0"
-              style={{ paddingBottom: isMobile ? '56px' : 0 }}
-            >
-              <Routes>
-                <Route path="/" element={<Chat />} />
-                <Route path="/sessions" element={<Sessions />} />
-                <Route path="/channels" element={<Channels />} />
-                <Route path="/agents" element={<Agents />} />
-                <Route path="/config" element={<Config />} />
-                <Route path="/approvals" element={<Approvals />} />
-                <Route path="/cron" element={<Cron />} />
-                <Route path="/skills" element={<Skills />} />
-                <Route path="/devices" element={<Devices />} />
-                <Route path="/logs" element={<Logs />} />
-                <Route path="/models" element={<Models />} />
-                <Route path="/usage" element={<Usage />} />
-                <Route path="/more" element={<More />} />
-                <Route path="/demon-chat" element={<DemonChatRoom />} />
-                <Route path="/demon-health" element={<DemonHealth />} />
-                <Route path="/demon-tasks" element={<DemonKanban />} />
-                <Route path="/demon-observability" element={<DemonObservability />} />
-                <Route path="/demon-memory" element={<DemonMemory />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
+          {/* Main content area */}
+          <main
+            className="flex-1 overflow-auto pb-0 md:pb-0"
+            style={{ paddingBottom: isMobile ? '56px' : 0 }}
+          >
+            <Routes>
+              <Route path="/" element={<Chat />} />
+              <Route path="/sessions" element={<Sessions />} />
+              <Route path="/channels" element={<Channels />} />
+              <Route path="/agents" element={<Agents />} />
+              <Route path="/config" element={<Config />} />
+              <Route path="/approvals" element={<Approvals />} />
+              <Route path="/cron" element={<Cron />} />
+              <Route path="/skills" element={<Skills />} />
+              <Route path="/devices" element={<Devices />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/models" element={<Models />} />
+              <Route path="/usage" element={<Usage />} />
+              <Route path="/more" element={<More />} />
+              <Route path="/demon-chat" element={<DemonChatRoom />} />
+              <Route path="/demon-health" element={<DemonHealth />} />
+              <Route path="/demon-tasks" element={<DemonKanban />} />
+              <Route path="/demon-observability" element={<DemonObservability />} />
+              <Route path="/demon-memory" element={<DemonMemory />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
 
-            {/* Mobile: Bottom Navigation */}
-            {isMobile && <MobileNav />}
-          </div>
+          {/* Mobile: Bottom Navigation */}
+          {isMobile && <MobileNav />}
         </div>
-      </TooltipProvider>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
     </BrowserRouter>
   );
 }
